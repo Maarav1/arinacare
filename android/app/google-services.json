@@ -1,0 +1,129 @@
+{
+  "project_info": {
+    "project_number": "162639628951",
+    "project_id": "lifematters-c466d",
+    "storage_bucket": "lifematters-c466d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:162639628951:android:7484f688fef55eec2637d2",
+        "android_client_info": {
+          "package_name": "com.arina.cav"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "162639628951-0vudfoi1kvhneqh8k7ntvnu5le9o1gaq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOm6TCQHPIZmmWQlAESO6Bx3UuqKh-GpM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "162639628951-0vudfoi1kvhneqh8k7ntvnu5le9o1gaq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "162639628951-10hmnf3cjgdi9eehcfmeoirek2oegkha.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.lifeMatters"
+              }
+            }
+          ]
+        }
+      },
+      "admob_app_id": "ca-app-pub-1472609237394607~2519847007"
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:162639628951:android:1b3ed230da11b51e2637d2",
+        "android_client_info": {
+          "package_name": "com.arina.cave"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "162639628951-3148rhr6a3cpqmeu2pnv3ba7vgkhubgh.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.arina.cave",
+            "certificate_hash": "661673d8a9d981a555f64692bccf68b403805ceb"
+          }
+        },
+        {
+          "client_id": "162639628951-0vudfoi1kvhneqh8k7ntvnu5le9o1gaq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOm6TCQHPIZmmWQlAESO6Bx3UuqKh-GpM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "162639628951-0vudfoi1kvhneqh8k7ntvnu5le9o1gaq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "162639628951-10hmnf3cjgdi9eehcfmeoirek2oegkha.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.lifeMatters"
+              }
+            }
+          ]
+        }
+      },
+      "admob_app_id": "ca-app-pub-1472609237394607~6393368200"
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:162639628951:android:227417953c4a96552637d2",
+        "android_client_info": {
+          "package_name": "com.raina.star"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "162639628951-0vudfoi1kvhneqh8k7ntvnu5le9o1gaq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOm6TCQHPIZmmWQlAESO6Bx3UuqKh-GpM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "162639628951-0vudfoi1kvhneqh8k7ntvnu5le9o1gaq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "162639628951-10hmnf3cjgdi9eehcfmeoirek2oegkha.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.lifeMatters"
+              }
+            }
+          ]
+        }
+      },
+      "admob_app_id": "ca-app-pub-1472609237394607~1711021854"
+    }
+  ],
+  "configuration_version": "1"
+}

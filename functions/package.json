@@ -1,0 +1,30 @@
+{
+"type": "module",
+  "scripts": {
+    "lint": "echo 'Linting disabled' && exit 0",
+    "build": "echo 'No build needed for JavaScript' && exit 0",
+    "build:watch": "echo 'No build needed for JavaScript'",
+    "serve": "firebase emulators:start --only functions",
+    "shell": "firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "cloudinary": "^2.8.0",
+    "dotenv": "^17.2.3",
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^6.6.0"
+  },
+  "name": "functions",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": "18"
+  },
+  "private": true
+}

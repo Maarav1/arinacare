@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ========== RATE LIMITING COLLECTION ==========
+    match /rate_limits/{userId} {
+      allow read: if false;
+      allow write: if request.auth != null;
+    }
+    
+    // ========== SECURITY LOGS COLLECTION ==========
+    match /security_logs/{logId} {
+      allow read: if request.auth != null && 
+                    (request.auth.token.isAdmin == true || 
+                     request.auth.uid == resource.data.userId);
+      allow create: if request.auth != null;
+      allow update, delete: if false;
+    }
+    
+    // ========== BANNED IPS COLLECTION ==========
+    match /banned_ips/{ipHash} {
+      allow read, write: if false;
+    }
+    
+    // ========== USERS COLLECTION ==========
+    match /users/{userId} {
+      // Read: Any authenticated user
+      allow read: if request.auth != null;
+      
+      // Create: New user signup with basic validation
+      allow create: if request.auth != null && 
+                       request.auth.uid == userId &&
+                       request.resource.data.email is string &&
+                       request.resource.data.email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+                       request.resource.data.createdAt is timestamp &&
+                       request.resource.data.createdAt <= request.time &&
+                       // Prevent malicious fields
+                       !('isAdmin' in request.resource.data) &&
+                       !('honeypot' in request.resource.data);
+      
+      // Update: Only own profile, can't change email or createdAt
+      allow update: if request.auth != null && 
+                       request.auth.uid == userId &&
+                       (!('email' in request.resource.data) || 
+                        resource.data.email == request.resource.data.email) &&
+                       !('isAdmin' in request.resource.data) &&
+                       !('createdAt' in request.resource.data);
+      
+      // Delete: DISABLED - users shouldn't delete profiles
+      allow delete: if false;
+      
+      // ========== FRIENDS SUBCOLLECTION ==========
+      match /friends/{friendId} {
+        allow read: if request.auth != null;
+        allow create, delete: if request.auth != null && 
+                                 request.auth.uid == userId;
+      }
+      
+      // ========== LIKES SUBCOLLECTION ==========
+      match /likes/{likeId} {
+        allow read: if request.auth != null;
+        allow create, delete: if request.auth != null && 
+                                 request.auth.uid != likeId; // Prevent self-liking
+      }
+    }
+    
+    // ========== LIKE COUNTS COLLECTION ==========
+    match /like_counts/{userId} {
+      allow read: if request.auth != null;
+      // Only allow increment/decrement by 1
+      allow write: if request.auth != null && 
+                     (request.resource.data.count == resource.data.count + 1 ||
+                      request.resource.data.count == resource.data.count - 1);
+    }
+    
+    // ========== FRIEND REQUESTS COLLECTION ==========
+    match /friend_requests/{requestId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // ========== NOTIFICATIONS COLLECTION ==========
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && 
+                     request.auth.uid == resource.data.userId;
+      allow write: if request.auth != null;
+    }
+    
+    // ========== POSTS COLLECTION ==========
+    match /posts/{postId} {
+      // Anyone can read posts
+      allow read: if true;
+      
+      // Create post with validation
+      allow create: if request.auth != null &&
+                       request.resource.data.content is string &&
+                       request.resource.data.content.size() < 5000 &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.createdAt is timestamp &&
+                       request.resource.data.content.size() > 0;
+      
+      // Update: Only owner
+      allow update: if request.auth != null &&
+                       request.auth.uid == resource.data.userId;
+      
+      // Delete: Only owner
+      allow delete: if request.auth != null &&
+                       request.auth.uid == resource.data.userId;
+    }
+    
+    // ========== MESSAGES COLLECTION ==========
+    match /messages/{messageId} {
+      allow read: if request.auth != null &&
+                     (request.auth.uid == resource.data.senderId ||
+                      request.auth.uid == resource.data.receiverId);
+      
+      allow create: if request.auth != null &&
+                       request.resource.data.content is string &&
+                       request.resource.data.content.size() < 2000 &&
+                       request.resource.data.senderId == request.auth.uid &&
+                       request.resource.data.receiverId != null &&
+                       request.resource.data.timestamp is timestamp;
+      
+      allow update, delete: if false;
+    }
+    
+    // ========== CHAT ROOMS COLLECTION ==========
+    match /chat_rooms/{chatRoomId} {
+      allow read: if request.auth != null &&
+                     request.auth.uid in resource.data.participants;
+      
+      allow create: if request.auth != null &&
+                       request.resource.data.participants is list &&
+                       request.resource.data.participants.size() <= 10 &&
+                       request.resource.data.createdAt is timestamp;
+      
+      allow update, delete: if false;
+      
+      // ========== CHAT ROOM MESSAGES ==========
+      match /messages/{messageId} {
+        allow read: if request.auth != null &&
+                       request.auth.uid in get(/databases/$(database)/documents/chat_rooms/$(chatRoomId)).data.participants;
+        
+        allow create: if request.auth != null &&
+                         request.auth.uid in get(/databases/$(database)/documents/chat_rooms/$(chatRoomId)).data.participants &&
+                         request.resource.data.content is string &&
+                         request.resource.data.content.size() < 2000 &&
+                         request.resource.data.senderId == request.auth.uid &&
+                         request.resource.data.timestamp is timestamp;
+        
+        allow update, delete: if false;
+      }
+    }
+    
+    // ========== ADMIN SECTION ==========
+    match /admin/{document} {
+      allow read, write: if request.auth != null && 
+                            request.auth.token.isAdmin == true;
+    }
+  }
+}

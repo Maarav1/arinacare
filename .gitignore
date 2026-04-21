@@ -1,0 +1,94 @@
+# Flutter
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+ios/.symlinks/
+ios/Pods/
+.fvm/
+.fvm/
+
+# Android
+android/.gradle
+android/.idea
+android/gradlew
+android/gradlew.bat
+android/local.properties
+android/key.properties
+*.jks
+*.keystore
+android/app/build/
+android/build/
+
+
+.dart_tool
+correct-symbols
+node_modules
+debug-info
+
+
+# iOS
+ios/.generated/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Runner/Generated.xcconfig
+ios/Runner/GeneratedPluginRegistrant.*
+ios/Podfile.lock
+ios/Pods/
+
+# Web
+.web/
+*.dart.js
+*.js
+*.js.map
+*.info.json
+
+# Environment variables
+#.env
+#.env.*
+!.env.example
+
+# Miscellaneous
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*~
+*.orig
+
+.fake# IDE
+.idea/
+*.iml
+
+*.p12
+
+# Generated files (can be regenerated)
+*.g.dart
+*.freezed.dart
+
+# Platform-specific build folders
+linux/
+macos/
+windows/
+web/  # Only if you don't need web version
+
+# Dataconnect (unless you need it)
+dataconnect/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+
+# Firebase functions (optional, can commit source)
+functions/node_modules/
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Runner/Generated.xcconfig
+

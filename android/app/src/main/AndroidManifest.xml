@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_MEMORY_INFO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+    <!-- For Android 14+ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <queries>
+        <!-- Allow internet access for streaming -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
+    <application
+        android:label="ArinaCave"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- For background audio with just_audio -->
+<service
+    android:name="com.ryanheise.audioservice.AudioService"
+    android:exported="false">  <!-- ⭐ CHANGE to false (internal service) -->
+    <intent-filter>
+        <action android:name="android.media.browse.MediaBrowserService" />
+    </intent-filter>
+</service>
+
+        <!-- For ExoPlayer background audio -->
+        <service
+            android:name="com.google.android.exoplayer2.ext.workmanager.WorkManagerScheduler"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Notification channel for audio -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="audio_channel" />
+        
+        <!-- AppLovin -->
+        <meta-data
+            android:name="applovin.sdk.key"
+            android:value="temp_key_until_approval" />
+
+        <!-- Google Mobile Ads -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-1472609237394607~2519847007" />
+
+        <!-- For just_audio background playback -->
+        <meta-data
+            android:name="android.media.browse.MediaBrowserService"
+            android:value="com.ryanheise.audioservice.AudioService" />
+
+        <!-- Disable battery optimization for background audio -->
+        <meta-data
+            android:name="android.app.auto_remove_at_low_memory"
+            android:value="false" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true">
+
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
+            <!-- Launcher -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Deep Link for GitHub Pages -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="maarav1.github.io" />
+                <data android:pathPrefix="/denis-marav" />
+            </intent-filter>
+
+            <!-- Custom Scheme -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="arina" />
+                <data android:host="cave" />
+            </intent-filter>
+
+            <!-- Audio intent filter for headset controls -->
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- For background execution -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+        <!-- Prevent app from being killed in background -->
+        <meta-data
+            android:name="android.app.background_restricted"
+            android:value="false" />
+
+        <!-- Audio notification channel -->
+<receiver 
+    android:name="androidx.media.session.MediaButtonReceiver"
+    android:exported="true">  <!-- ⭐ ADD THIS LINE -->
+    <intent-filter>
+        <action android:name="android.intent.action.MEDIA_BUTTON" />
+    </intent-filter>
+</receiver>
+    </application>
+</manifest>

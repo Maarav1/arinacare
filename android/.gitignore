@@ -1,0 +1,115 @@
+# Android
+.gradle
+/local.properties
+/captures/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+/app/*.jks
+/app/*.keystore
+
+# iOS
+**/ios/Flutter/.last_build_id
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# Flutter/Dart/Pub
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+**/doc/api/
+
+# IntelliJ/Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code
+#.vscode/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.svn/
+.history
+.swiftpm/
+.atom/
+.buildlog/
+migrate_working_dir/
+
+# Local configuration files
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Never commit these security files!
+key.properties
+**/*.keystore
+**/*.jks
+keystore.properties
+
+# Symbolication/Obfuscation
+app.*.symbols
+app.*.map.json
+
+# Generated files
+GeneratedPluginRegistrant.java
+.generated_plugin_registrant.dart
+
+# Architecture-specific directories
+.cxx/
+/jniLibs/
+
+# Your custom exclusions
+/fake
+.fake
+# IDE
+.idea/
+*.iml
+
+# Flutter/Dart
+.dart_tool/
+.packages
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Build files
+build/
+.android/
+.ios/
+.macos/
+.web/
+windows/
+linux/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+*.swp
+*~
