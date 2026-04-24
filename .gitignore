@@ -45,10 +45,18 @@ ios/Pods/
 *.js.map
 *.info.json
 
-# Environment variables
-#.env
-#.env.*
+ Environment variables
+.env
+.env.*
 !.env.example
+
+# .gitignore - add these lines
+.env
+.env.local
+.env.*.local
+*.key
+*secret*
+api_keys.txt
 
 # Miscellaneous
 .DS_Store
@@ -92,3 +100,11 @@ ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
 ios/Runner/Generated.xcconfig
 
+
+.fake.env
+.env
+keystore.properties
+*.jks
+*.pem
+.env
+*.key
