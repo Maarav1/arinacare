@@ -6,7 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:arina_cave/services/ad_service.dart';
+import 'package:arina_cave/widgets/ad_banner.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
@@ -34,10 +35,6 @@ class _AIScreenState extends State<AIScreen>
   late Box<ChatMessageHive> _chatBox;
   late Box<ConversationHive> _conversationBox;
   late Box<UserProfileHive> _userProfileBox;
-
-  // AdMob variables
-  BannerAd? _bannerAd;
-  bool _isBannerAdLoaded = false;
 
   // Gemini API variables
   String _geminiApiKey = '';
@@ -171,10 +168,8 @@ class _AIScreenState extends State<AIScreen>
     _initializeHive();
     _initializeApiKey();
     _initializeWebView();
-    _initializeAds();
     _initializeFocusNode();
     _scrollController = ScrollController();
-    _startInterstitialTimer();
     _messageController.addListener(() {});
   }
 
@@ -196,7 +191,6 @@ class _AIScreenState extends State<AIScreen>
     await _cancelCurrentStream();
     _streamSubscription?.cancel();
     _streamSubscription = null;
-    _bannerAd?.dispose();
     _messageController.dispose();
     _nameController.dispose();
     _interestsController.dispose();
@@ -1065,7 +1059,7 @@ If information might be outdated or you're unsure about recent developments, men
           final aiResponses =
               _messages.where((m) => !m.isUser && !m.isError).length;
           if (aiResponses % 3 == 0) {
-            AdManager.showInterstitialAd();
+            AdService.instance.showInterstitialAd();
           }
         },
       );
@@ -1892,46 +1886,6 @@ If information might be outdated or you're unsure about recent developments, men
         print('Failed to set user agent: $e');
       }
     }
-  }
-
-  void _initializeAds() {
-    _bannerAd = BannerAd(
-      adUnitId: 'ca-app-pub-1472609237394607/8084106825',
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (Ad ad) {
-          if (mounted) {
-            setState(() {
-              _isBannerAdLoaded = true;
-            });
-          }
-          if (kDebugMode) {
-            print('Banner ad loaded successfully');
-          }
-        },
-        onAdFailedToLoad: (Ad ad, LoadAdError error) {
-          if (kDebugMode) {
-            print('Banner ad failed to load: $error');
-          }
-          ad.dispose();
-          Future.delayed(const Duration(seconds: 10), () {
-            if (mounted) {
-              _initializeAds();
-            }
-          });
-        },
-      ),
-    );
-    _bannerAd?.load();
-  }
-
-  void _startInterstitialTimer() {
-    Timer.periodic(const Duration(minutes: 5), (timer) {
-      if (mounted && _usingGeminiAPI) {
-        AdManager.showInterstitialAd();
-      }
-    });
   }
 
   Widget _buildPlatformSelection() {
@@ -2905,27 +2859,7 @@ If information might be outdated or you're unsure about recent developments, men
   }
 
   Widget _buildBannerAd() {
-    if (!_isBannerAdLoaded) {
-      return Container(
-        height: 60,
-        width: double.infinity,
-        color: Colors.black,
-        child: const Center(
-          child: Text(
-            'Welcome to ArinaCave',
-            style: TextStyle(color: Colors.white54),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      height: _bannerAd?.size.height.toDouble() ?? 60,
-      width: double.infinity,
-      color: Colors.black,
-      alignment: Alignment.center,
-      child: AdWidget(ad: _bannerAd!),
-    );
+    return const AdBanner();
   }
 
   @override
@@ -3497,136 +3431,3 @@ class _ParsedResponse {
   _ParsedResponse({required this.thinkingProcess, required this.finalResponse});
 }
 
-class AdManager {
-  static BannerAd? _bannerAd;
-  static InterstitialAd? _interstitialAd;
-  static bool _isBannerAdLoaded = false;
-  static bool _isInterstitialAdLoaded = false;
-  static bool _isInterstitialLoading = false;
-
-  static void initialize() {
-    loadBannerAd();
-    loadInterstitialAd();
-  }
-
-  static void loadBannerAd() {
-    _bannerAd = BannerAd(
-      adUnitId: 'ca-app-pub-1472609237394607/7118264698',
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (Ad ad) {
-          _isBannerAdLoaded = true;
-          if (kDebugMode) {
-            print('Banner ad loaded successfully');
-          }
-        },
-        onAdFailedToLoad: (Ad ad, LoadAdError error) {
-          _isBannerAdLoaded = false;
-          if (kDebugMode) {
-            print('Banner ad failed to load: $error');
-          }
-          ad.dispose();
-          Future.delayed(const Duration(seconds: 3), loadBannerAd);
-        },
-      ),
-    )..load();
-  }
-
-  static void loadInterstitialAd() {
-    if (_isInterstitialLoading) return;
-
-    _isInterstitialLoading = true;
-    InterstitialAd.load(
-      adUnitId: 'ca-app-pub-1472609237394607/3819175757',
-      request: const AdRequest(),
-      adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (InterstitialAd ad) {
-          _interstitialAd = ad;
-          _isInterstitialAdLoaded = true;
-          _isInterstitialLoading = false;
-
-          if (kDebugMode) {
-            print('Interstitial ad loaded successfully');
-          }
-        },
-        onAdFailedToLoad: (LoadAdError error) {
-          _isInterstitialAdLoaded = false;
-          _isInterstitialLoading = false;
-          if (kDebugMode) {
-            print('Interstitial ad failed to load: $error');
-          }
-          Future.delayed(const Duration(seconds: 5), loadInterstitialAd);
-        },
-      ),
-    );
-  }
-
-  static void showInterstitialAd() {
-    if (_isInterstitialAdLoaded && _interstitialAd != null) {
-      _interstitialAd?.fullScreenContentCallback = FullScreenContentCallback(
-        onAdDismissedFullScreenContent: (InterstitialAd ad) {
-          ad.dispose();
-          _isInterstitialAdLoaded = false;
-          loadInterstitialAd();
-        },
-        onAdFailedToShowFullScreenContent: (InterstitialAd ad, AdError error) {
-          ad.dispose();
-          _isInterstitialAdLoaded = false;
-          loadInterstitialAd();
-        },
-      );
-
-      _interstitialAd?.show();
-      _interstitialAd = null;
-    } else {
-      loadInterstitialAd();
-    }
-  }
-
-  static Widget getBannerAdWidget() {
-    if (_isBannerAdLoaded && _bannerAd != null) {
-      return Container(
-        width: _bannerAd!.size.width.toDouble(),
-        height: _bannerAd!.size.height.toDouble(),
-        color: Colors.black,
-        alignment: Alignment.center,
-        child: AdWidget(ad: _bannerAd!),
-      );
-    } else {
-      if (!_isBannerAdLoaded) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          loadBannerAd();
-        });
-      }
-      return _buildAdPlaceholder();
-    }
-  }
-
-  static Widget _buildAdPlaceholder() {
-    return Container(
-      height: 60,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade800),
-      ),
-      child: const Center(
-        child: Text(
-          'Welcome to ArinaCave',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white54,
-          ),
-        ),
-      ),
-    );
-  }
-
-  static void dispose() {
-    _bannerAd?.dispose();
-    _interstitialAd?.dispose();
-  }
-}

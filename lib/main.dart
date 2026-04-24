@@ -1,12 +1,13 @@
 import 'dart:async';
 
+import 'package:arina_cave/router/app_router.dart';
 import 'package:arina_cave/screens/gemini_service.dart';
+import 'package:arina_cave/services/ad_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:arina_cave/routes/router.dart';
 import 'package:go_router/go_router.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -39,6 +40,15 @@ Future<void> main() async {
       _initializeHive(),  // Simple Hive initialization (no browser adapters here)
       GeminiService.instance.initialize(),
     ]);
+
+    // Initialize AdService and preload first interstitial
+      AdService.instance.loadInterstitialAd();
+      AdService.instance.startIntervalTimer(); // Start 5-minute timer
+
+      // Show ad immediately after first frame 
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        AdService.instance.showInterstitialAd();
+      });
     
     // Setup error reporting
     FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterError;
@@ -279,9 +289,11 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  @override
+    @override
   void dispose() {
     _deepLinkSubscription?.cancel();
+    AdService.instance.stopIntervalTimer();
+    AdService.instance.dispose();
     super.dispose();
   }
 

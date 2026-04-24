@@ -8,7 +8,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:arina_cave/services/ad_service.dart';
+import 'package:arina_cave/widgets/ad_banner.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:share_plus/share_plus.dart';
@@ -160,171 +161,6 @@ class LifecycleEventHandler extends WidgetsBindingObserver {
   }
 }
 
-class AdManager {
-  static BannerAd? _bannerAd;
-  static InterstitialAd? _interstitialAd;
-  static bool _isBannerAdLoaded = false;
-  static bool _isInterstitialAdLoaded = false;
-  static bool _isInterstitialLoading = false;
-
-  static Future<void> initialize() async {
-    await MobileAds.instance.initialize();
-    // Pre-load an interstitial ad on app start
-    _loadInterstitialAd();
-  }
-
-  static Future<BannerAd?> loadBannerAd() async {
-    try {
-      _bannerAd?.dispose();
-      _isBannerAdLoaded = false;
-
-      _bannerAd = BannerAd(
-        adUnitId: AppConstants.bannerAdId,
-        size: AdSize.banner,
-        request: const AdRequest(),
-        listener: BannerAdListener(
-          onAdLoaded: (Ad ad) {
-            _isBannerAdLoaded = true;
-          },
-          onAdFailedToLoad: (Ad ad, LoadAdError error) {
-            _isBannerAdLoaded = false;
-            ad.dispose();
-            Future.delayed(const Duration(seconds: 3), () => loadBannerAd());
-          },
-        ),
-      );
-
-      await _bannerAd?.load();
-      return _bannerAd;
-    } catch (e) {
-      _isBannerAdLoaded = false;
-      return null;
-    }
-  }
-
-static Future<void> _loadInterstitialAd() async {
-    // Prevent multiple simultaneous loading attempts
-    if (_isInterstitialLoading || _isInterstitialAdLoaded) {
-      return;
-    }
-
-    _isInterstitialLoading = true;
-    
-    try {
-      await InterstitialAd.load(
-        adUnitId: AppConstants.interstitialAdId,
-        request: const AdRequest(),
-        adLoadCallback: InterstitialAdLoadCallback(
-          onAdLoaded: (InterstitialAd ad) {
-            _interstitialAd = ad;
-            _isInterstitialAdLoaded = true;
-            _isInterstitialLoading = false;
-
-            // Set up full screen content callbacks
-            ad.fullScreenContentCallback = FullScreenContentCallback(
-              onAdShowedFullScreenContent: (InterstitialAd ad) {
-                // Ad displayed successfully
-              },
-              onAdDismissedFullScreenContent: (InterstitialAd ad) {
-                ad.dispose();
-                _interstitialAd = null;
-                _isInterstitialAdLoaded = false;
-                // Load a new ad for next time
-                _loadInterstitialAd();
-              },
-              onAdFailedToShowFullScreenContent: (InterstitialAd ad, AdError error) {
-                ad.dispose();
-                _interstitialAd = null;
-                _isInterstitialAdLoaded = false;
-                _isInterstitialLoading = false;
-                // Retry loading after delay
-                Future.delayed(const Duration(seconds: 30), _loadInterstitialAd);
-              },
-            );
-          },
-          onAdFailedToLoad: (LoadAdError error) {
-            _interstitialAd = null;
-            _isInterstitialAdLoaded = false;
-            _isInterstitialLoading = false;
-            // Retry loading after delay
-            Future.delayed(const Duration(seconds: 30), _loadInterstitialAd);
-          },
-        ),
-      );
-    } catch (e) {
-      _isInterstitialAdLoaded = false;
-      _isInterstitialLoading = false;
-      // Retry loading after delay
-      Future.delayed(const Duration(seconds: 30), _loadInterstitialAd);
-    }
-  }
-
-  static void showInterstitialAd() {
-    if (_isInterstitialAdLoaded && _interstitialAd != null) {
-      try {
-        _interstitialAd!.show();
-      } catch (e) {
-        // If showing fails, try to load a new one
-        _loadInterstitialAd();
-      }
-    } else {
-      // If no ad is ready, load one for next time
-      _loadInterstitialAd();
-    }
-  }
-
-  static Widget getBannerAdWidget() {
-    if (_isBannerAdLoaded && _bannerAd != null) {
-      return Container(
-        width: _bannerAd!.size.width.toDouble(),
-        height: _bannerAd!.size.height.toDouble(),
-        alignment: Alignment.center,
-        child: AdWidget(ad: _bannerAd!),
-      );
-    } else {
-      // If banner isn't loaded, try to load it and show placeholder
-      if (!_isBannerAdLoaded) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          loadBannerAd();
-        });
-      }
-      return _buildAdPlaceholder();
-    }
-  }
-
-  static Widget _buildAdPlaceholder() {
-    return Container(
-      height: 60,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.grey[200],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: const Center(
-        child: Text(
-          'Welcome to ArinaCave',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey,
-          ),
-        ),
-      ),
-    );
-  }
-
-  static bool get isBannerAdLoaded => _isBannerAdLoaded;
-  static bool get isInterstitialAdLoaded => _isInterstitialAdLoaded;
-
-  static void dispose() {
-    _bannerAd?.dispose();
-    _interstitialAd?.dispose();
-    _isBannerAdLoaded = false;
-    _isInterstitialAdLoaded = false;
-    _isInterstitialLoading = false;
-  }
-}
 
 // Enhanced notification system
 class NotificationManager {
@@ -663,84 +499,6 @@ class CommentManager {
   }
 }
 
-class AdBannerWidget extends StatefulWidget {
-  const AdBannerWidget({super.key});
-
-  @override
-  State<AdBannerWidget> createState() => _AdBannerWidgetState();
-}
-
-class _AdBannerWidgetState extends State<AdBannerWidget> {
-  BannerAd? _bannerAd;
-  bool _isBannerAdReady = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadBannerAd();
-  }
-
-  void _loadBannerAd() {
-    _bannerAd = BannerAd(
-      adUnitId: AppConstants.bannerAdId,
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (ad) {
-          setState(() {
-            _isBannerAdReady = true;
-          });
-        },
-        onAdFailedToLoad: (ad, error) {
-          ad.dispose();
-          _isBannerAdReady = false;
-          Future.delayed(const Duration(seconds: 3), _loadBannerAd);
-        },
-      ),
-    )..load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 60,
-      width: double.infinity,
-      alignment: Alignment.center,
-      child: _isBannerAdReady && _bannerAd != null
-          ? AdWidget(ad: _bannerAd!)
-          : _buildAdPlaceholder(),
-    );
-  }
-
-  Widget _buildAdPlaceholder() {
-    return Container(
-      height: 60,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.grey[200],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: const Center(
-        child: Text(
-          'Welcome to ArinaCave',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey,
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _bannerAd?.dispose();
-    super.dispose();
-  }
-}
-
 // Enhanced Home Screen with notification badge
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -755,67 +513,32 @@ class _HomeScreenState extends State<HomeScreen> {
   final _scaffoldKey = GlobalKey<ScaffoldMessengerState>();
 
   bool _isLoading = false;
-  Timer? _adTimer;
   final ScrollController _scrollController = ScrollController();
   final Set<String> _expandedPosts = <String>{};
-
-  BannerAd? _bannerAd;
 
   // Local state for likes to prevent screen refresh
   final Map<String, bool> _localLikeStates = {};
   final Map<String, int> _localLikeCounts = {};
+    int _postViewCount = 0;
 
     @override
   void initState() {
     super.initState();
     _initializeApp();
     _setupNotificationListener();
-    _loadBannerAd();
-    _setupAds(); // Direct loading, no AdManager
+
+  }
+
+    void _showInterstitialIfNeeded() {
+    _postViewCount++;
+    if (_postViewCount % 5 == 0) {
+      AdService.instance.showInterstitialAd();
+    }
   }
 
   Future<void> _initializeApp() async {
-    await MobileAds.instance.initialize(); // Initialize directly
-    _startAdTimer();
+    
     _setupOnlineStatus();
-  }
-
-  void _setupAds() {
-    _loadBannerAd();
-  }
-
-  void _loadBannerAd() {
-    _bannerAd = BannerAd(
-      adUnitId: NewsConstants.bannerAdUnitId,
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (ad) {
-          // No setState here - we'll use a different approach
-          if (mounted) {
-            // Use a more targeted approach to update just the banner
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              setState(() {
-              });
-            });
-          }
-        },
-        onAdFailedToLoad: (ad, error) {
-          ad.dispose();
-          // Retry after delay without rebuilding entire screen
-          Future.delayed(const Duration(seconds: 30), _loadBannerAd);
-        },
-      ),
-    )..load();
-  }
-
-   void _startAdTimer() {
-    _adTimer?.cancel();
-
-    // Show ad every 5 minutes
-    _adTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      AdManager.showInterstitialAd();
-    });
   }
 
   void _setupOnlineStatus() {
@@ -1200,8 +923,6 @@ Widget _buildOnlineIndicator() {
 
   @override
   void dispose() {
-    _adTimer?.cancel();
-    _bannerAd?.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -1304,12 +1025,13 @@ Widget _buildOnlineIndicator() {
                     onDelete: _handleDeletePost,
                     localLikeStates: _localLikeStates,
                     localLikeCounts: _localLikeCounts,
+                    onPostViewed: _showInterstitialIfNeeded,
                   ),
                   Positioned(
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: AdBannerWidget(),
+                    child: const AdBanner(),
                   ),
                 ],
               ),
@@ -1387,6 +1109,7 @@ class _PostsStreamBuilder extends StatefulWidget {
   final Function(BuildContext, DocumentSnapshot) onDelete;
   final Map<String, bool> localLikeStates;
   final Map<String, int> localLikeCounts;
+  final VoidCallback? onPostViewed;
 
   const _PostsStreamBuilder({
     required this.scrollController,
@@ -1397,6 +1120,7 @@ class _PostsStreamBuilder extends StatefulWidget {
     required this.onDelete,
     required this.localLikeStates,
     required this.localLikeCounts,
+    this.onPostViewed,
   });
 
   @override
@@ -1442,8 +1166,15 @@ class _PostsStreamBuilderState extends State<_PostsStreamBuilder> {
       itemCount: posts.length,
       itemBuilder: (context, index) {
         final post = posts[index];
-        final postId = post.id;
         
+          // Trigger interstitial callback
+                if (widget.onPostViewed != null) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    widget.onPostViewed!();
+                  });
+                }
+        final postId = post.id;
+
         // Use local state if available, otherwise use post data
         final isLiked = widget.localLikeStates[postId] ?? 
             List<String>.from(post['likedBy'] ?? []).contains(_currentUser?.uid);

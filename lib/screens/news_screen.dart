@@ -7,7 +7,10 @@ import 'package:shimmer/shimmer.dart';
 import 'package:http/http.dart' as http;
 import 'package:rss_dart/dart_rss.dart';
 import 'dart:async';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:arina_cave/services/ad_service.dart';
+import 'package:arina_cave/widgets/ad_banner.dart';
+
+
 
 class ArinaNewsScreen extends StatefulWidget {
   const ArinaNewsScreen({super.key});
@@ -22,13 +25,8 @@ class _ArinaNewsScreenState extends State<ArinaNewsScreen>
   final RefreshController _refreshController = RefreshController();
   List<NewsArticle> _breakingNews = [];
   bool _isLoadingBreakingNews = true;
+    int _articleViewCount = 0;
   
-  // Ad variables
-  BannerAd? _bannerAd;
-  InterstitialAd? _interstitialAd;
-  bool _isBannerAdLoaded = false;
-  Timer? _interstitialTimer;
-
   // Curated mobile-friendly news sources
   final List<NewsSource> _newsSources = [
     NewsSource(
@@ -117,10 +115,6 @@ NewsSource(
     ),
   ];
 
-  // Ad unit IDs
-  static const String _bannerAdUnitId = 'ca-app-pub-1472609237394607/7118264698';
-  static const String _interstitialAdUnitId = 'ca-app-pub-1472609237394607/3819175757';
-
   @override
   void initState() {
     super.initState();
@@ -130,104 +124,19 @@ NewsSource(
       });
     });
     _fetchBreakingNews();
-    _initAds();
-    _startInterstitialTimer();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _refreshController.dispose();
-    _bannerAd?.dispose();
-    _interstitialAd?.dispose();
-    _interstitialTimer?.cancel();
     super.dispose();
   }
 
-  void _initAds() {
-    // Load banner ad
-    _loadBannerAd();
-    
-    // Pre-load interstitial ad
-    _loadInterstitialAd();
-  }
-
-  void _loadBannerAd() {
-    _bannerAd = BannerAd(
-      adUnitId: _bannerAdUnitId,
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (Ad ad) {
-          debugPrint('Banner ad loaded successfully');
-          setState(() {
-            _isBannerAdLoaded = true;
-          });
-        },
-        onAdFailedToLoad: (Ad ad, LoadAdError error) {
-          debugPrint('Banner ad failed to load: $error');
-          ad.dispose();
-          // Try to reload the banner after a delay
-          Future.delayed(const Duration(seconds: 5), () {
-            if (mounted) {
-              _loadBannerAd();
-            }
-          });
-        },
-      ),
-    );
-    _bannerAd?.load();
-  }
-
-  void _loadInterstitialAd() {
-    InterstitialAd.load(
-      adUnitId: _interstitialAdUnitId,
-      request: const AdRequest(),
-      adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (InterstitialAd ad) {
-          _interstitialAd = ad;
-          _interstitialAd?.fullScreenContentCallback = FullScreenContentCallback(
-            onAdDismissedFullScreenContent: (InterstitialAd ad) {
-              ad.dispose();
-              _loadInterstitialAd(); // Pre-load next interstitial
-            },
-            onAdFailedToShowFullScreenContent: (InterstitialAd ad, AdError error) {
-              ad.dispose();
-              _loadInterstitialAd(); // Pre-load next interstitial
-            },
-          );
-        },
-        onAdFailedToLoad: (LoadAdError error) {
-          debugPrint('Interstitial ad failed to load: $error');
-          // Try again after 30 seconds
-          Future.delayed(const Duration(seconds: 5), () {
-            _loadInterstitialAd();
-          });
-        },
-      ),
-    );
-  }
-
-  void _startInterstitialTimer() {
-    // Show interstitial immediately when screen loads
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showInterstitialAd();
-    });
-    
-    // Set up timer to show interstitial every 5 minutes
-    _interstitialTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      _showInterstitialAd();
-    });
-  }
-
-  void _showInterstitialAd() {
-    if (_interstitialAd != null) {
-      _interstitialAd?.show();
-      // After showing, pre-load next interstitial
-      _loadInterstitialAd();
-    } else {
-      // If no ad is loaded, try to load one
-      _loadInterstitialAd();
+  void _showInterstitialIfNeeded() {
+    _articleViewCount++;
+    if (_articleViewCount % 5 == 0) {
+      AdService.instance.showInterstitialAd();
     }
   }
 
@@ -432,15 +341,7 @@ Widget build(BuildContext context) {
           ),
         ),
         
-        // SINGLE BANNER AD at the bottom
-        if (_isBannerAdLoaded && _bannerAd != null)
-          Container(
-            alignment: Alignment.center,
-            width: MediaQuery.of(context).size.width,
-            height: _bannerAd!.size.height.toDouble(),
-            color: Colors.transparent,
-            child: AdWidget(ad: _bannerAd!),
-          ),
+        const AdBanner(),
       ],
     ),
   );
@@ -881,6 +782,7 @@ Widget build(BuildContext context) {
   }
 
   void _openNewsSource(NewsSource source) {
+    _showInterstitialIfNeeded(); 
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -890,6 +792,7 @@ Widget build(BuildContext context) {
   }
 
   void _openArticle(NewsArticle article) {
+    _showInterstitialIfNeeded();
     if (article.url.isNotEmpty) {
       _launchURL(article.url);
     } else {
@@ -1008,13 +911,6 @@ class WebViewScreen extends StatefulWidget {
 class _WebViewScreenState extends State<WebViewScreen> {
   late WebViewController _controller;
   bool _isLoading = true;
-  
-  // Ad variables for WebView screen
-  BannerAd? _bannerAd;
-  bool _isBannerAdLoaded = false;
-  
-  // Ad unit IDs (same as main screen)
-  static const String _bannerAdUnitId = 'ca-app-pub-1472609237394607/7118264698';
 
   @override
   void initState() {
@@ -1036,41 +932,11 @@ class _WebViewScreenState extends State<WebViewScreen> {
         ),
       )
       ..loadRequest(Uri.parse(widget.source.url));
-    
-    _loadBannerAd();
   }
 
   @override
   void dispose() {
-    _bannerAd?.dispose();
     super.dispose();
-  }
-
-  void _loadBannerAd() {
-    _bannerAd = BannerAd(
-      adUnitId: _bannerAdUnitId,
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (Ad ad) {
-          debugPrint('WebView Banner ad loaded successfully');
-          setState(() {
-            _isBannerAdLoaded = true;
-          });
-        },
-        onAdFailedToLoad: (Ad ad, LoadAdError error) {
-          debugPrint('WebView Banner ad failed to load: $error');
-          ad.dispose();
-          // Try to reload the banner after a delay
-          Future.delayed(const Duration(seconds: 5), () {
-            if (mounted) {
-              _loadBannerAd();
-            }
-          });
-        },
-      ),
-    );
-    _bannerAd?.load();
   }
 
   @override
@@ -1112,14 +978,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
               ],
             ),
           ),
-          // Banner Ad at the bottom of WebView screen
-          if (_isBannerAdLoaded && _bannerAd != null)
-            Container(
-              alignment: Alignment.center,
-              width: _bannerAd!.size.width.toDouble(),
-              height: _bannerAd!.size.height.toDouble(),
-              child: AdWidget(ad: _bannerAd!),
-            ),
+          const AdBanner(),
         ],
       ),
     );

@@ -13,7 +13,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:arina_cave/services/ad_service.dart';
+import 'package:arina_cave/widgets/ad_banner.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
@@ -40,9 +41,6 @@ class NewsConstants {
   static const String successPostDelete = 'Post deleted successfully!';
   static const String successComment = 'Comment added!';
   static const String successShare = 'Link copied to clipboard!';
-
-  static const String bannerAdUnitId = 'ca-app-pub-1472609237394607/7118264698';
-  static const String interstitialAdUnitId = 'ca-app-pub-1472609237394607/3819175757';
 }
 
 // ----------------------- Auto Delete Service -----------------------
@@ -215,11 +213,7 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
   bool _hasMore = true;
   DocumentSnapshot? _lastDocument;
   Timer? _refreshTimer;
-  Timer? _adTimer;
-  InterstitialAd? _interstitialAd;
-  bool _isInterstitialReady = false;
-  BannerAd? _bannerAd;
-  bool _isBannerAdReady = false;
+    int _postViewCount = 0;
 
   @override
   void initState() {
@@ -227,7 +221,6 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
     _loadInitialPosts();
     _scrollController.addListener(_onScroll);
     _refreshTimer = Timer.periodic(NewsConstants.refreshDuration, (_) => _refreshPosts());
-    _setupAds();
     PostAutoDeleteService.initializeAutoDelete(); // Initialize auto-delete service
   }
 
@@ -235,10 +228,14 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
   void dispose() {
     _scrollController.dispose();
     _refreshTimer?.cancel();
-    _adTimer?.cancel();
-    _interstitialAd?.dispose();
-    _bannerAd?.dispose();
     super.dispose();
+  }
+
+    void _showInterstitialIfNeeded() {
+    _postViewCount++;
+    if (_postViewCount % 5 == 0) {
+      AdService.instance.showInterstitialAd();
+    }
   }
 
   // ----------------------- Firestore post loading -----------------------
@@ -259,6 +256,7 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
         _lastDocument = snap.docs.isNotEmpty ? snap.docs.last : null;
         _hasMore = snap.docs.length == NewsConstants.postsPerPage;
         setState(() {});
+        AdService.instance.preloadInterstitial();
       }
     } catch (e) {
       if (mounted) _showError(NewsConstants.errorGeneric);
@@ -301,75 +299,6 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
         _scrollController.position.maxScrollExtent - 200) {
       if (_hasMore && !_isLoading) _loadMorePosts();
     }
-  }
-
-  // ----------------------- Ads Setup -----------------------
-  void _setupAds() {
-    _loadBannerAd();
-    _setupInterstitialAds();
-  }
-
-  void _loadBannerAd() {
-    _bannerAd = BannerAd(
-      adUnitId: NewsConstants.bannerAdUnitId,
-      request: const AdRequest(),
-      size: AdSize.banner,
-      listener: BannerAdListener(
-        onAdLoaded: (_) {
-          setState(() {
-            _isBannerAdReady = true;
-          });
-        },
-        onAdFailedToLoad: (ad, error) {
-          ad.dispose();
-          _isBannerAdReady = false;
-          // Retry after delay
-          Future.delayed(const Duration(seconds: 3), _loadBannerAd);
-        },
-      ),
-    )..load();
-  }
-
-  void _setupInterstitialAds() {
-    _loadInterstitial();
-
-    _adTimer = Timer.periodic(NewsConstants.adInterval, (_) async {
-      if (_isInterstitialReady) {
-        _interstitialAd?.show();
-      } else {
-        await _loadInterstitial();
-      }
-    });
-  }
-
-  Future<void> _loadInterstitial() async {
-    _interstitialAd?.dispose();
-    _isInterstitialReady = false;
-
-    InterstitialAd.load(
-      adUnitId: NewsConstants.interstitialAdUnitId,
-      request: const AdRequest(),
-      adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (ad) {
-          _interstitialAd = ad;
-          _isInterstitialReady = true;
-          _interstitialAd?.setImmersiveMode(true);
-          _interstitialAd?.fullScreenContentCallback = FullScreenContentCallback(
-            onAdDismissedFullScreenContent: (ad) async {
-              ad.dispose();
-              await _loadInterstitial();
-            },
-            onAdFailedToShowFullScreenContent: (ad, error) async {
-              ad.dispose();
-              await _loadInterstitial();
-            },
-          );
-        },
-        onAdFailedToLoad: (error) {
-          _isInterstitialReady = false;
-        },
-      ),
-    );
   }
 
   // ----------------------- Helpers -----------------------
@@ -505,15 +434,7 @@ Widget build(BuildContext context) {
         child: Column(
           children: [
             Expanded(child: _buildBody()),
-            // Banner Ad at bottom
-            if (_isBannerAdReady)
-              Container(
-                color: Colors.white, // Ad container also white
-                width: _bannerAd!.size.width.toDouble(),
-                height: _bannerAd!.size.height.toDouble(),
-                alignment: Alignment.center,
-                child: AdWidget(ad: _bannerAd!),
-              ),
+            const AdBanner(),
           ],
         ),
       ),
@@ -536,6 +457,10 @@ Widget build(BuildContext context) {
         itemBuilder: (context, index) {
           if (index >= _posts.length) return _buildLoadingTile();
           final doc = _posts[index];
+              // Show interstitial after every 5 posts
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _showInterstitialIfNeeded();
+            });
           return Container(
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: PostCard(
