@@ -4,7 +4,7 @@ import 'package:arina_cave/screens/news_api_screen.dart';
 import 'package:arina_cave/screens/news_screen.dart';
 import 'package:arina_cave/screens/privacy_policy.dart';
 import 'package:arina_cave/screens/radio_screen.dart';
-import 'package:arina_cave/screens/sql_screen.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -321,19 +321,19 @@ class AppRouter {
         },
         redirect: _routeGuard,
       ),
-      GoRoute(
-        path: '/sql',
-        name: 'sql',
+    /*  GoRoute(
+        path: '/deepSeek',
+        name: 'deepSeek',
         pageBuilder: (context, state) {
-          _logScreenView('sql');
+          _logScreenView('deepSeek');
           return buildPageWithDefaultTransition(
             context: context,
             state: state,
-            child: const AScreen(),
+            child: const DeepSeekScreen(),
           );
         },
-        redirect: _routeGuard,
-      ),
+        redirect: _routeGuard, 
+      ), */
       GoRoute(
         path: '/feed',
         name: 'feed',

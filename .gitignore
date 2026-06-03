@@ -108,3 +108,5 @@ keystore.properties
 *.pem
 .env
 *.key
+
+.fake

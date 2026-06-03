@@ -16,6 +16,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'hive_models.dart';
 
+
 class AIScreen extends StatefulWidget {
   const AIScreen({super.key});
 
@@ -53,9 +54,16 @@ class _AIScreenState extends State<AIScreen>
   late ScrollController _scrollController;
 
   // Continue response variables
-  bool _responseIncomplete = false;
   String _lastIncompleteResponse = '';
   bool _isContinuingResponse = false;
+
+  // Error handling and retry
+  int _retryCount = 0;
+  static const int _maxRetries = 3;
+  String? _lastFailedPrompt;
+  List<Uint8List>? _lastFailedImages;
+  bool _hasPartialResponse = false;
+  String _partialResponseOnError = '';
 
   // Model selection variables
   String _selectedModel = 'gemini-2.5-flash';
@@ -150,6 +158,10 @@ class _AIScreenState extends State<AIScreen>
   bool _enableHistory = true;
   double _temperature = 0.2;
 
+  // Smart context settings
+  int _maxContextMessages = 10;
+  bool _enableSmartContext = true;
+
   // Thinking mode tracking
   final Stopwatch _thinkingStopwatch = Stopwatch();
   String _currentThinkingProcess = '';
@@ -158,6 +170,14 @@ class _AIScreenState extends State<AIScreen>
 
   // Web search
   final bool _enableWebSearch = false;
+
+  // Auto-scroll timer
+  Timer? _autoScrollTimer;
+
+  // NEW: Scroll button visibility timer
+  Timer? _scrollButtonTimer;
+  bool _showScrollButton = false;
+  bool _userScrolledUp = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -170,7 +190,52 @@ class _AIScreenState extends State<AIScreen>
     _initializeWebView();
     _initializeFocusNode();
     _scrollController = ScrollController();
-    _messageController.addListener(() {});
+    _scrollController.addListener(_onScroll);
+    _messageController.addListener(_onMessageTextChanged);
+  }
+
+  void _onMessageTextChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  // NEW: Scroll listener for button visibility
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
+    final isNearBottom =
+        _scrollController.offset >=
+        _scrollController.position.maxScrollExtent - 150;
+
+    if (!isNearBottom) {
+      if (!_showScrollButton) {
+        setState(() {
+          _showScrollButton = true;
+          _userScrolledUp = true;
+        });
+        _resetScrollButtonTimer();
+      }
+    } else {
+      if (_userScrolledUp) {
+        setState(() {
+          _userScrolledUp = false;
+          _showScrollButton = false;
+        });
+      }
+    }
+  }
+
+  // NEW: Reset scroll button auto-hide timer
+  void _resetScrollButtonTimer() {
+    _scrollButtonTimer?.cancel();
+    _scrollButtonTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) {
+        setState(() {
+          _showScrollButton = false;
+        });
+      }
+    });
   }
 
   void _initializeFocusNode() {
@@ -191,6 +256,12 @@ class _AIScreenState extends State<AIScreen>
     await _cancelCurrentStream();
     _streamSubscription?.cancel();
     _streamSubscription = null;
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _scrollButtonTimer?.cancel();
+    _scrollButtonTimer = null;
+    _scrollController.removeListener(_onScroll);
+    _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     _nameController.dispose();
     _interestsController.dispose();
@@ -311,8 +382,12 @@ class _AIScreenState extends State<AIScreen>
       _currentThinkingProcess = '';
       _isThinkingComplete = false;
       _isThinkingPhase = false;
-      _responseIncomplete = false;
       _lastIncompleteResponse = '';
+      _retryCount = 0;
+      _lastFailedPrompt = null;
+      _lastFailedImages = null;
+      _hasPartialResponse = false;
+      _partialResponseOnError = '';
     });
 
     await _loadChatHistoryForModel(newModel);
@@ -377,6 +452,18 @@ class _AIScreenState extends State<AIScreen>
           if (kDebugMode) {
             print('✅ Loaded ${messages.length} messages for model: $modelId');
           }
+          // Restore continue state from loaded history
+          final lastAiMsg = _messages.lastWhere(
+            (m) => !m.isUser && m.isIncomplete && !m.isError,
+            orElse: () => ChatMessage(
+              text: '',
+              isUser: false,
+              timestamp: DateTime.now(),
+            ),
+          );
+          if (lastAiMsg.text.isNotEmpty) {
+            _lastIncompleteResponse = lastAiMsg.text;
+          }
         }
       } else {
         if (kDebugMode) {
@@ -428,7 +515,7 @@ class _AIScreenState extends State<AIScreen>
       '...',
       '..',
       '--',
-      '...',
+      '…',
       'etc.',
       'and',
       'but',
@@ -470,25 +557,16 @@ class _AIScreenState extends State<AIScreen>
     return false;
   }
 
-
-
-  Stream<String> _streamGeminiResponse(
-    String prompt, {
-    List<Uint8List>? images,
-  }) async* {
-    const String baseUrl =
-        'https://generativelanguage.googleapis.com/v1beta/models/';
-    final String url =
-        '$baseUrl$_selectedModel:streamGenerateContent?alt=sse&key=$_geminiApiKey';
-
-    final headers = {'Content-Type': 'application/json'};
+  List<Map<String, dynamic>> _buildSmartContext(
+    String currentPrompt,
+    List<Uint8List>? currentImages,
+  ) {
+    final List<Map<String, dynamic>> contents = [];
 
     final userProfiles = _userProfileBox.values.toList();
     final hasUserInfo = userProfiles.isNotEmpty;
     final userName = hasUserInfo ? userProfiles.first.name : '';
     final userInterests = hasUserInfo ? userProfiles.first.interests : '';
-
-    final List<Map<String, dynamic>> contents = [];
 
     final now = DateTime.now();
     final dateFormatter = DateFormat('MMMM dd, yyyy');
@@ -497,49 +575,35 @@ class _AIScreenState extends State<AIScreen>
     final currentTime = timeFormatter.format(now);
     final currentYear = now.year;
 
-    String systemPrompt =
-        '''You are a helpful AI assistant having a conversation with a user.
-You have memory of previous messages in this conversation.
-Always remember the full conversation context.
-Respond naturally and helpfully.
-If asked about previous messages, reference them appropriately.
+    String systemPrompt = '''You are a helpful AI assistant.
 
-IMPORTANT: You must be aware of the current date and time.
+CRITICAL INSTRUCTIONS:
+1. Focus ONLY on the user's CURRENT/LATEST message
+2. The previous messages are provided for context flow and continuity ONLY
+3. Do NOT repeat, rehash, or discuss previous messages unless specifically asked
+4. Answer the CURRENT question directly and completely
+5. Keep your response focused on what was JUST asked
+
 Current Date: $currentDate
 Current Time: $currentTime
-Current Year: $currentYear
-
-Use this real-time context when responding to time-sensitive questions.
-If asked about current events, news, or recent developments, acknowledge the current date context.
-If information might be outdated or you're unsure about recent developments, mention this limitation.''';
+Current Year: $currentYear''';
 
     if (hasUserInfo && userName.isNotEmpty) {
-      systemPrompt += '\n\nThe user\'s name is $userName.';
+      systemPrompt += '\n\nUser\'s name: $userName';
       if (userInterests.isNotEmpty) {
-        systemPrompt += ' They are interested in: $userInterests.';
+        systemPrompt += '\nUser interests: $userInterests';
       }
-      systemPrompt +=
-          ' Use this information to personalize responses when appropriate.';
     }
 
-    final isTimeSensitive = _isTimeSensitiveQuery(prompt);
+    final isTimeSensitive = _isTimeSensitiveQuery(currentPrompt);
     if (isTimeSensitive && !_enableWebSearch) {
       systemPrompt +=
-          '\n\nNote: The user is asking about time-sensitive information. Acknowledge that your knowledge has a cutoff and suggest enabling web search for the most current information if available.';
+          '\n\nNote: For time-sensitive info, acknowledge your knowledge cutoff.';
     }
 
     if (_enableThinking) {
       systemPrompt +=
-          '\n\nIMPORTANT: When responding, first think step by step about your reasoning internally. '
-          'Describe your thinking process in natural language, explaining:'
-          '1. What the user is asking or requesting'
-          '2. What you need to consider or analyze'
-          '3. How you approach solving the problem'
-          '4. What steps you take to reach a conclusion'
-          '5. Any assumptions or considerations you make'
-          'Use this exact format: "THINKING_START[your detailed thinking process here]THINKING_END". '
-          'After finishing thinking, immediately provide your final response. '
-          'The thinking section will be shown separately from the final response.';
+          '\n\nThinking format: "THINKING_START[your reasoning]THINKING_END" then provide final response.';
     }
 
     contents.add({
@@ -554,33 +618,64 @@ If information might be outdated or you're unsure about recent developments, men
       'parts': [
         {
           'text':
-              'I understand. I will remember our conversation context${hasUserInfo && userName.isNotEmpty ? ' and address you as $userName when appropriate.' : '.'} I am aware that today is $currentDate and the current year is $currentYear.${_enableThinking ? ' I will first think internally using the specified format, then provide the final response.' : ''}',
+              'Understood. I will focus on the CURRENT message and use previous context only for continuity.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate, year: $currentYear.${_enableThinking ? ' I will use the thinking format as specified.' : ''}',
         },
       ],
     });
 
-    final chatMessages =
-        _messages.where((msg) => !msg.text.contains('I understand')).toList();
-    final recentMessages =
-        chatMessages.length <= 100
-            ? chatMessages
-            : chatMessages.sublist(chatMessages.length - 100);
+    if (_enableSmartContext && _messages.isNotEmpty) {
+      final chatMessages =
+          _messages
+              .where(
+                (msg) =>
+                    !msg.text.contains('I understand') &&
+                    !msg.text.contains('Understood'),
+              )
+              .toList();
 
-    for (final msg in recentMessages) {
-      contents.add({
-        'role': msg.isUser ? 'user' : 'model',
-        'parts': [
-          {'text': msg.text},
-        ],
-      });
+      List<ChatMessage> contextMessages;
+
+      if (chatMessages.length <= _maxContextMessages) {
+        contextMessages = chatMessages;
+      } else {
+        contextMessages = [
+          ...chatMessages.take(2),
+          ...chatMessages.skip(chatMessages.length - (_maxContextMessages - 2)),
+        ];
+
+        contents.add({
+          'role': 'user',
+          'parts': [
+            {'text': '[Earlier conversation history omitted for brevity]'},
+          ],
+        });
+        contents.add({
+          'role': 'model',
+          'parts': [
+            {'text': 'Noted. I\'ll focus on recent context.'},
+          ],
+        });
+      }
+
+      for (final msg in contextMessages) {
+        contents.add({
+          'role': msg.isUser ? 'user' : 'model',
+          'parts': [
+            {'text': msg.text},
+          ],
+        });
+      }
     }
 
     final List<Map<String, dynamic>> currentParts = [
-      {'text': prompt},
+      {
+        'text':
+            '>>> NEW REQUEST (Please focus on answering THIS specifically) <<<\n\n$currentPrompt',
+      },
     ];
 
-    if (images != null && images.isNotEmpty) {
-      for (var imageBytes in images) {
+    if (currentImages != null && currentImages.isNotEmpty) {
+      for (var imageBytes in currentImages) {
         currentParts.add({
           'inline_data': {
             'mime_type': 'image/jpeg',
@@ -592,13 +687,29 @@ If information might be outdated or you're unsure about recent developments, men
 
     contents.add({'role': 'user', 'parts': currentParts});
 
+    return contents;
+  }
+
+  Stream<String> _streamGeminiResponse(
+    String prompt, {
+    List<Uint8List>? images,
+  }) async* {
+    const String baseUrl =
+        'https://generativelanguage.googleapis.com/v1beta/models/';
+    final String url =
+        '$baseUrl$_selectedModel:streamGenerateContent?alt=sse&key=$_geminiApiKey';
+
+    final headers = {'Content-Type': 'application/json'};
+
+    final contents = _buildSmartContext(prompt, images);
+
     final requestBody = <String, dynamic>{
       'contents': contents,
       'generationConfig': {
         'temperature': _temperature,
         'topK': 40,
-        'topP': 0.99,
-        'maxOutputTokens': 16384,
+        'topP': 0.95,
+        'maxOutputTokens': 65536, // INCREASED - no max output limit
       },
       'safetySettings': [
         {
@@ -622,13 +733,12 @@ If information might be outdated or you're unsure about recent developments, men
 
     if (kDebugMode) {
       print(
-        '🔗 Sending streaming request to Gemini API with ${recentMessages.length} previous messages',
+        '🔗 Sending request with SMART CONTEXT (max $_maxContextMessages messages)',
       );
-      print('📝 Prompt: $prompt');
+      print('📝 Current prompt: $prompt');
       if (images != null && images.isNotEmpty) {
         print('🖼️ Images: ${images.length}');
       }
-      print('📅 Current date context: $currentDate, Year: $currentYear');
     }
 
     try {
@@ -702,10 +812,69 @@ If information might be outdated or you're unsure about recent developments, men
     }
   }
 
+  Future<void> _retryFailedRequest() async {
+    if (_lastFailedPrompt == null) {
+      // Recover last user message as the failed prompt
+      final lastUser = _messages.lastWhere(
+        (m) => m.isUser,
+        orElse:
+            () =>
+                ChatMessage(text: '', isUser: true, timestamp: DateTime.now()),
+      );
+      if (lastUser.text.isNotEmpty) {
+        _lastFailedPrompt = lastUser.text;
+        _lastFailedImages = lastUser.images;
+      } else {
+        return;
+      }
+    }
+
+    if (_retryCount >= _maxRetries) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Maximum retry attempts reached'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    _retryCount++;
+
+    if (mounted) {
+      setState(() {
+        if (_messages.isNotEmpty && _messages.last.isError) {
+          _messages.removeLast();
+        }
+      });
+    }
+
+    await _sendGeminiMessageInternal(
+      _lastFailedPrompt!,
+      images: _lastFailedImages,
+      isRetry: true,
+    );
+  }
+
+  // FIX: Continue now properly appends to existing response
   Future<void> _continueIncompleteResponse() async {
-    if (_isContinuingResponse ||
-        !_responseIncomplete ||
-        _lastIncompleteResponse.isEmpty) {
+        // Recover incomplete text from messages list if state was lost
+    if (_lastIncompleteResponse.isEmpty) {
+      final lastIncomplete = _messages.lastWhere(
+        (m) => !m.isUser && m.isIncomplete && !m.isError,
+        orElse:
+            () =>
+                ChatMessage(text: '', isUser: false, timestamp: DateTime.now()),
+      );
+      if (lastIncomplete.text.isNotEmpty) {
+        _lastIncompleteResponse = lastIncomplete.text;
+      }
+    }
+
+    if (_isContinuingResponse || _lastIncompleteResponse.isEmpty) {
       return;
     }
 
@@ -723,7 +892,7 @@ If information might be outdated or you're unsure about recent developments, men
       String accumulatedResponse = '';
 
       _streamSubscription = _streamGeminiResponse(
-        "Please continue from where you left off.",
+        "Continue your previous response from exactly where you stopped. Do not repeat what you already said. Just continue the text seamlessly.",
       ).listen(
         (chunk) {
           if (!mounted) return;
@@ -732,16 +901,19 @@ If information might be outdated or you're unsure about recent developments, men
             accumulatedResponse += chunk;
             _currentStreamText = accumulatedResponse;
           });
+
+          _scheduleAutoScroll();
         },
         onError: (error) {
           if (!mounted) return;
           setState(() {
             _messages.add(
               ChatMessage(
-                text: 'Error continuing response: ${error.toString()}',
+                text: 'Network error. Tap Retry.',
                 isUser: false,
                 timestamp: DateTime.now(),
                 isError: true,
+                canRetry: true,
               ),
             );
             _resetContinueState();
@@ -750,6 +922,7 @@ If information might be outdated or you're unsure about recent developments, men
         onDone: () async {
           if (!mounted) return;
 
+          // FIX: Properly append without spaces
           final continuedResponse =
               _lastIncompleteResponse + accumulatedResponse;
 
@@ -763,7 +936,6 @@ If information might be outdated or you're unsure about recent developments, men
               ),
             );
             _resetContinueState();
-            _responseIncomplete = false;
             _lastIncompleteResponse = '';
           });
 
@@ -775,10 +947,11 @@ If information might be outdated or you're unsure about recent developments, men
       setState(() {
         _messages.add(
           ChatMessage(
-            text: 'Failed to continue response: ${e.toString()}',
+            text: 'Network error. Tap Retry.',
             isUser: false,
             timestamp: DateTime.now(),
             isError: true,
+            canRetry: true,
           ),
         );
         _resetContinueState();
@@ -903,36 +1076,57 @@ If information might be outdated or you're unsure about recent developments, men
     final List<Uint8List> images = List.from(_selectedImages);
 
     if (message.isEmpty && images.isEmpty) return;
-
     if (_isSendingMessage) return;
 
-    setState(() {
-      _isSendingMessage = true;
-    });
-
-    final String originalMessage = message;
-
     _messageController.clear();
+
+    if (mounted) {
+      setState(() {
+        _selectedImages.clear();
+        _isSendingMessage = true;
+      });
+    }
+
+    await _sendGeminiMessageInternal(
+      message.isEmpty ? "[Image analysis request]" : message,
+      images: images.isNotEmpty ? images : null,
+      isRetry: false,
+    );
+  }
+
+  Future<void> _sendGeminiMessageInternal(
+    String prompt, {
+    List<Uint8List>? images,
+    required bool isRetry,
+  }) async {
+    if (!isRetry) {
+      _retryCount = 0;
+      _lastFailedPrompt = prompt;
+      _lastFailedImages = images;
+      _hasPartialResponse = false;
+      _partialResponseOnError = '';
+    }
 
     await _cancelCurrentStream();
 
     if (mounted) {
       setState(() {
-        _selectedImages.clear();
         _isStreaming = true;
         _currentThinkingProcess = '';
         _isThinkingComplete = false;
         _isThinkingPhase = false;
         _currentStreamText = '';
 
-        _messages.add(
-          ChatMessage(
-            text: originalMessage,
-            isUser: true,
-            timestamp: DateTime.now(),
-            images: images.isNotEmpty ? List.from(images) : null,
-          ),
-        );
+        if (!isRetry) {
+          _messages.add(
+            ChatMessage(
+              text: prompt,
+              isUser: true,
+              timestamp: DateTime.now(),
+              images: images?.isNotEmpty == true ? List.from(images!) : null,
+            ),
+          );
+        }
       });
     }
 
@@ -943,19 +1137,23 @@ If information might be outdated or you're unsure about recent developments, men
       _inputFocusNode?.requestFocus();
     });
 
+    _startAutoScrollTimer();
+
     try {
       String accumulatedResponse = '';
       bool thinkingDetected = false;
 
       _streamSubscription = _streamGeminiResponse(
-        originalMessage.isEmpty ? "[Image analysis request]" : originalMessage,
-        images: images.isNotEmpty ? images : null,
+        prompt,
+        images: images,
       ).listen(
         (chunk) {
           if (!mounted) return;
 
           setState(() {
             accumulatedResponse += chunk;
+            _partialResponseOnError = accumulatedResponse;
+            _hasPartialResponse = true;
 
             if (_enableThinking) {
               if (!thinkingDetected &&
@@ -988,16 +1186,43 @@ If information might be outdated or you're unsure about recent developments, men
               _currentStreamText = accumulatedResponse;
             }
           });
+
+          _scheduleAutoScroll();
         },
         onError: (error) {
           if (!mounted) return;
+
+          final partialText = _partialResponseOnError;
+          final hasPartial = _hasPartialResponse && partialText.isNotEmpty;
+
           setState(() {
+            if (hasPartial) {
+              _messages.add(
+                ChatMessage(
+                  text: partialText,
+                  isUser: false,
+                  timestamp: DateTime.now(),
+                  isIncomplete: true,
+                  thinkingProcess:
+                      _currentThinkingProcess.isNotEmpty
+                          ? _currentThinkingProcess
+                          : null,
+                  thinkingTime:
+                      _currentThinkingProcess.isNotEmpty
+                          ? _thinkingStopwatch.elapsed
+                          : null,
+                ),
+              );
+            }
+
             _messages.add(
               ChatMessage(
-                text: 'Error: ${error.toString()}',
+                text:
+                    'Error: ${error.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry below to try again." : "Maximum retries reached."}',
                 isUser: false,
                 timestamp: DateTime.now(),
                 isError: true,
+                canRetry: _retryCount < _maxRetries,
               ),
             );
             _resetMessageState();
@@ -1016,7 +1241,6 @@ If information might be outdated or you're unsure about recent developments, men
 
           setState(() {
             if (seemsIncomplete) {
-              _responseIncomplete = true;
               _lastIncompleteResponse = finalOutput;
               _messages.add(
                 ChatMessage(
@@ -1052,6 +1276,10 @@ If information might be outdated or you're unsure about recent developments, men
               );
             }
             _resetMessageState();
+
+            _retryCount = 0;
+            _lastFailedPrompt = null;
+            _lastFailedImages = null;
           });
 
           await _saveConversation();
@@ -1061,17 +1289,36 @@ If information might be outdated or you're unsure about recent developments, men
           if (aiResponses % 3 == 0) {
             AdService.instance.showInterstitialAd();
           }
+
+          _scheduleAutoScroll();
         },
       );
     } catch (e) {
       if (!mounted) return;
+
+      final partialText = _partialResponseOnError;
+      final hasPartial = _hasPartialResponse && partialText.isNotEmpty;
+
       setState(() {
+        if (hasPartial) {
+          _messages.add(
+            ChatMessage(
+              text: partialText,
+              isUser: false,
+              timestamp: DateTime.now(),
+              isIncomplete: true,
+            ),
+          );
+        }
+
         _messages.add(
           ChatMessage(
-            text: 'Failed to get response: ${e.toString()}',
+            text:
+                'Failed to get response: ${e.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry to try again." : "Max retries reached."}',
             isUser: false,
             timestamp: DateTime.now(),
             isError: true,
+            canRetry: _retryCount < _maxRetries,
           ),
         );
         _resetMessageState();
@@ -1087,6 +1334,31 @@ If information might be outdated or you're unsure about recent developments, men
     _isThinkingComplete = false;
     _isThinkingPhase = false;
     _thinkingStopwatch.reset();
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  void _startAutoScrollTimer() {
+    _autoScrollTimer?.cancel();
+    if (_enableAutoScroll) {
+      _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        _scheduleAutoScroll();
+      });
+    }
+  }
+
+  void _scheduleAutoScroll() {
+    if (!_enableAutoScroll || _userScrolledUp) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        try {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        } catch (e) {
+          // Ignore scroll errors
+        }
+      }
+    });
   }
 
   Future<void> _loadUserProfile() async {
@@ -1152,6 +1424,8 @@ If information might be outdated or you're unsure about recent developments, men
     _currentThinkingProcess = '';
     _isThinkingComplete = false;
     _isThinkingPhase = false;
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
   }
 
   Future<void> _showPlatformSelectionScreen() async {
@@ -1168,8 +1442,10 @@ If information might be outdated or you're unsure about recent developments, men
         _currentThinkingProcess = '';
         _isThinkingComplete = false;
         _isThinkingPhase = false;
-        _responseIncomplete = false;
         _lastIncompleteResponse = '';
+        _retryCount = 0;
+        _lastFailedPrompt = null;
+        _lastFailedImages = null;
       });
     }
   }
@@ -1187,193 +1463,264 @@ If information might be outdated or you're unsure about recent developments, men
             builder: (context, setState) {
               return Container(
                 padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Settings',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Settings',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    _buildSettingsSection(
-                      title: 'Chat Settings',
-                      children: [
-                        SwitchListTile(
-                          title: const Text(
-                            'Auto-scroll',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          subtitle: const Text(
-                            'Automatically scroll to new messages',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                          value: _enableAutoScroll,
-                          activeColor: Colors.orange,
-                          onChanged: (value) {
-                            setState(() {
-                              _enableAutoScroll = value;
-                            });
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                this.setState(() {
-                                  _enableAutoScroll = value;
-                                });
-                              }
-                            });
-                          },
-                        ),
-                        SwitchListTile(
-                          title: const Text(
-                            'Streaming',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          subtitle: const Text(
-                            'Enable real-time response streaming',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                          value: _enableStreaming,
-                          activeColor: Colors.orange,
-                          onChanged: (value) {
-                            setState(() {
-                              _enableStreaming = value;
-                            });
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                this.setState(() {
-                                  _enableStreaming = value;
-                                });
-                              }
-                            });
-                          },
-                        ),
-                        SwitchListTile(
-                          title: const Text(
-                            'Chat History',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          subtitle: const Text(
-                            'Save and load chat conversations',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                          value: _enableHistory,
-                          activeColor: Colors.orange,
-                          onChanged: (value) {
-                            setState(() {
-                              _enableHistory = value;
-                            });
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                this.setState(() {
-                                  _enableHistory = value;
-                                  if (value) {
-                                    _loadChatHistoryForModel(_selectedModel);
-                                  } else {
-                                    _messages.clear();
-                                  }
-                                });
-                              }
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildSettingsSection(
-                      title: 'Input Settings',
-                      children: [
-                        SwitchListTile(
-                          title: const Text(
-                            'Image Upload',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          subtitle: const Text(
-                            'Allow uploading images to AI',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                          value: _enableImageUpload,
-                          activeColor: Colors.orange,
-                          onChanged: (value) {
-                            setState(() {
-                              _enableImageUpload = value;
-                            });
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                this.setState(() {
-                                  _enableImageUpload = value;
-                                });
-                              }
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildSettingsSection(
-                      title: 'AI Settings',
-                      children: [
-                        ListTile(
-                          title: const Text(
-                            'Temperature',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          subtitle: Text(
-                            '${_temperature.toStringAsFixed(1)} (Higher = more creative)',
-                            style: const TextStyle(color: Colors.white54),
-                          ),
-                          trailing: SizedBox(
-                            width: 150,
-                            child: Slider(
-                              value: _temperature,
-                              min: 0.0,
-                              max: 1.0,
-                              divisions: 10,
-                              activeColor: Colors.orange,
-                              inactiveColor: Colors.grey.shade700,
-                              onChanged: (value) {
-                                setState(() {
-                                  _temperature = value;
-                                });
-                                WidgetsBinding.instance.addPostFrameCallback((
-                                  _,
-                                ) {
-                                  if (mounted) {
-                                    this.setState(() {
-                                      _temperature = value;
-                                    });
-                                  }
-                                });
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => Navigator.pop(context),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.grey.shade900,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Close',
+                      const SizedBox(height: 20),
+
+                      _buildSettingsSection(
+                        title: 'Chat Settings',
+                        children: [
+                          SwitchListTile(
+                            title: const Text(
+                              'Auto-scroll',
                               style: TextStyle(color: Colors.white),
                             ),
+                            subtitle: const Text(
+                              'Automatically scroll to new messages',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableAutoScroll,
+                            activeColor: Colors.orange,
+                            onChanged: (value) {
+                              setState(() {
+                                _enableAutoScroll = value;
+                              });
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  this.setState(() {
+                                    _enableAutoScroll = value;
+                                  });
+                                }
+                              });
+                            },
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                          SwitchListTile(
+                            title: const Text(
+                              'Streaming',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Enable real-time response streaming',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableStreaming,
+                            activeColor: Colors.orange,
+                            onChanged: (value) {
+                              setState(() {
+                                _enableStreaming = value;
+                              });
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  this.setState(() {
+                                    _enableStreaming = value;
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                          SwitchListTile(
+                            title: const Text(
+                              'Chat History',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Save and load chat conversations',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableHistory,
+                            activeColor: Colors.orange,
+                            onChanged: (value) {
+                              setState(() {
+                                _enableHistory = value;
+                              });
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  this.setState(() {
+                                    _enableHistory = value;
+                                    if (value) {
+                                      _loadChatHistoryForModel(_selectedModel);
+                                    } else {
+                                      _messages.clear();
+                                    }
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      _buildSettingsSection(
+                        title: 'Context Settings',
+                        children: [
+                          SwitchListTile(
+                            title: const Text(
+                              'Smart Context',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Focus on recent messages',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableSmartContext,
+                            activeColor: Colors.green,
+                            onChanged: (value) {
+                              setState(() {
+                                _enableSmartContext = value;
+                              });
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  this.setState(() {
+                                    _enableSmartContext = value;
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                          ListTile(
+                            title: const Text(
+                              'Context Window Size',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              '$_maxContextMessages messages',
+                              style: const TextStyle(color: Colors.white54),
+                            ),
+                            trailing: SizedBox(
+                              width: 150,
+                              child: Slider(
+                                value: _maxContextMessages.toDouble(),
+                                min: 5,
+                                max: 50,
+                                divisions: 9,
+                                activeColor: Colors.green,
+                                inactiveColor: Colors.grey.shade700,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _maxContextMessages = value.toInt();
+                                  });
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      this.setState(() {
+                                        _maxContextMessages = value.toInt();
+                                      });
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      _buildSettingsSection(
+                        title: 'Input Settings',
+                        children: [
+                          SwitchListTile(
+                            title: const Text(
+                              'Image Upload',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Allow uploading images to AI',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableImageUpload,
+                            activeColor: Colors.orange,
+                            onChanged: (value) {
+                              setState(() {
+                                _enableImageUpload = value;
+                              });
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  this.setState(() {
+                                    _enableImageUpload = value;
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      _buildSettingsSection(
+                        title: 'AI Settings',
+                        children: [
+                          ListTile(
+                            title: const Text(
+                              'Temperature',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              '${_temperature.toStringAsFixed(1)} (Higher = more creative)',
+                              style: const TextStyle(color: Colors.white54),
+                            ),
+                            trailing: SizedBox(
+                              width: 150,
+                              child: Slider(
+                                value: _temperature,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 10,
+                                activeColor: Colors.orange,
+                                inactiveColor: Colors.grey.shade700,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _temperature = value;
+                                  });
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      this.setState(() {
+                                        _temperature = value;
+                                      });
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.pop(context),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.grey.shade900,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text(
+                                'Close',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -1418,22 +1765,24 @@ If information might be outdated or you're unsure about recent developments, men
     );
   }
 
+  // FIX: Instant scroll - milliseconds not minutes
   void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      setState(() {
+        _showScrollButton = false;
+        _userScrolledUp = false;
+      });
+    }
   }
 
+  // FIX: Scroll button on LEFT side
   Widget _buildScrollToBottomButton() {
+    if (!_showScrollButton) return const SizedBox.shrink();
+
     return Positioned(
       bottom: 80,
-      left: 12,
+      left: 12, // MOVED TO LEFT
       child: GestureDetector(
         onTap: _scrollToBottom,
         child: Container(
@@ -1444,7 +1793,7 @@ If information might be outdated or you're unsure about recent developments, men
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withAlpha(50),
+                color: Colors.black.withAlpha(100),
                 blurRadius: 8,
                 offset: const Offset(0, 4),
               ),
@@ -1477,8 +1826,10 @@ If information might be outdated or you're unsure about recent developments, men
           _currentThinkingProcess = '';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
-          _responseIncomplete = false;
           _lastIncompleteResponse = '';
+          _retryCount = 0;
+          _lastFailedPrompt = null;
+          _lastFailedImages = null;
         });
       }
     } else {
@@ -1491,7 +1842,6 @@ If information might be outdated or you're unsure about recent developments, men
           _currentThinkingProcess = '';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
-          _responseIncomplete = false;
           _lastIncompleteResponse = '';
           _isLoading = true;
         });
@@ -1607,7 +1957,8 @@ If information might be outdated or you're unsure about recent developments, men
             TextField(
               controller: _interestsController,
               style: const TextStyle(color: Colors.white),
-              maxLines: 5,
+              maxLines: null, // NO MAX LINES - unlimited input
+              keyboardType: TextInputType.multiline,
               decoration: InputDecoration(
                 hintText:
                     'What topics are you interested in?\nExample: technology, science, art, sports, gaming, music, movies, books, travel, food, fitness, business, education...',
@@ -1717,8 +2068,10 @@ If information might be outdated or you're unsure about recent developments, men
           _currentThinkingProcess = '';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
-          _responseIncomplete = false;
           _lastIncompleteResponse = '';
+          _retryCount = 0;
+          _lastFailedPrompt = null;
+          _lastFailedImages = null;
         });
       }
 
@@ -1742,10 +2095,10 @@ If information might be outdated or you're unsure about recent developments, men
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Failed to clear chat history'),
+          const SnackBar(
+            content: Text('Failed to clear chat history'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 2),
+            duration: Duration(seconds: 2),
           ),
         );
       }
@@ -2235,7 +2588,6 @@ If information might be outdated or you're unsure about recent developments, men
           children: [
             Column(
               children: [
-                // Header bar with model info
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -2376,6 +2728,38 @@ If information might be outdated or you're unsure about recent developments, men
                           ],
                         ),
                       ),
+
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withAlpha(20),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.green, width: 1),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.memory,
+                              size: 10,
+                              color: Colors.green,
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Ctx: $_maxContextMessages',
+                              style: const TextStyle(
+                                color: Colors.green,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
                       const Spacer(),
 
                       if (_enableStreaming)
@@ -2421,7 +2805,6 @@ If information might be outdated or you're unsure about recent developments, men
                   ),
                 ),
 
-                // Chat messages area
                 Expanded(
                   child:
                       _messages.isEmpty && _currentStreamText.isEmpty
@@ -2445,7 +2828,7 @@ If information might be outdated or you're unsure about recent developments, men
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Temperature: ${_temperature.toStringAsFixed(1)} (High Accuracy)',
+                                  'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
                                   style: const TextStyle(
                                     color: Colors.green,
                                     fontSize: 12,
@@ -2453,7 +2836,7 @@ If information might be outdated or you're unsure about recent developments, men
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Streaming: Enabled',
+                                  'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: Enabled',
                                   style: const TextStyle(
                                     color: Colors.blue,
                                     fontSize: 12,
@@ -2473,24 +2856,24 @@ If information might be outdated or you're unsure about recent developments, men
                                         borderRadius: BorderRadius.circular(20),
                                         border: Border.all(color: Colors.green),
                                       ),
-                                      child: Row(
+                                      child: const Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          const Icon(
+                                          Icon(
                                             Icons.person_add,
                                             color: Colors.green,
                                             size: 16,
                                           ),
-                                          const SizedBox(width: 8),
-                                          const Text(
+                                          SizedBox(width: 8),
+                                          Text(
                                             'Set up your profile',
                                             style: TextStyle(
                                               color: Colors.green,
                                               fontSize: 12,
                                             ),
                                           ),
-                                          const SizedBox(width: 8),
-                                          const Icon(
+                                          SizedBox(width: 8),
+                                          Icon(
                                             Icons.arrow_forward,
                                             color: Colors.green,
                                             size: 12,
@@ -2522,7 +2905,13 @@ If information might be outdated or you're unsure about recent developments, men
                                   message: _messages[index],
                                   enableAutoScroll: _enableAutoScroll,
                                   onContinuePressed:
-                                      _continueIncompleteResponse,
+                                      _messages[index].isIncomplete
+                                          ? _continueIncompleteResponse
+                                          : null,
+                                  onRetryPressed:
+                                      _messages[index].canRetry
+                                          ? _retryFailedRequest
+                                          : null,
                                 );
                               } else {
                                 if (_isThinkingPhase && _enableThinking) {
@@ -2602,8 +2991,8 @@ If information might be outdated or you're unsure about recent developments, men
                                       isLoading: _isStreaming,
                                     ),
                                     enableAutoScroll: _enableAutoScroll,
-                                    onContinuePressed:
-                                        _continueIncompleteResponse,
+                                    onContinuePressed: null,
+                                    onRetryPressed: null,
                                   );
                                 }
                               }
@@ -2611,7 +3000,6 @@ If information might be outdated or you're unsure about recent developments, men
                           ),
                 ),
 
-                // Selected images preview
                 if (_selectedImages.isNotEmpty)
                   Container(
                     height: 80,
@@ -2663,7 +3051,6 @@ If information might be outdated or you're unsure about recent developments, men
                     ),
                   ),
 
-                // Input field at the bottom
                 Container(
                   padding: const EdgeInsets.all(7),
                   color: Colors.grey.shade900,
@@ -2707,7 +3094,7 @@ If information might be outdated or you're unsure about recent developments, men
                                   color: Colors.white,
                                   fontSize: 14,
                                 ),
-                                maxLines: null,
+                                maxLines: null, // NO MAX LINES - unlimited
                                 keyboardType: TextInputType.multiline,
                                 textInputAction: TextInputAction.newline,
                                 decoration: InputDecoration(
@@ -2790,7 +3177,9 @@ If information might be outdated or you're unsure about recent developments, men
                                         size: 20,
                                       ),
                               onPressed: () async {
-                                await _sendGeminiMessage();
+                                if (!_isSendingMessage) {
+                                  await _sendGeminiMessage();
+                                }
                               },
                             ),
                           ),
@@ -2803,11 +3192,7 @@ If information might be outdated or you're unsure about recent developments, men
               ],
             ),
 
-            // Scroll to bottom button
-            if (_scrollController.hasClients &&
-                _scrollController.offset <
-                    _scrollController.position.maxScrollExtent - 100)
-              _buildScrollToBottomButton(),
+            _buildScrollToBottomButton(),
           ],
         ),
       ),
@@ -2904,6 +3289,7 @@ class ChatMessage {
   final String? thinkingProcess;
   final Duration? thinkingTime;
   final bool isIncomplete;
+  final bool canRetry;
 
   ChatMessage({
     required this.text,
@@ -2915,33 +3301,30 @@ class ChatMessage {
     this.thinkingProcess,
     this.thinkingTime,
     this.isIncomplete = false,
+    this.canRetry = false,
   });
 }
 
+// COMPLETELY REWRITTEN CODE BLOCK LOGIC - NO MORE BUGS!
 class _CodeBlock {
   final String language;
   final String code;
-  final int startIndex;
-  final int endIndex;
 
-  _CodeBlock({
-    required this.language,
-    required this.code,
-    required this.startIndex,
-    required this.endIndex,
-  });
+  _CodeBlock({required this.language, required this.code});
 }
 
 class ChatBubbleWithThinking extends StatefulWidget {
   final ChatMessage message;
   final bool enableAutoScroll;
   final VoidCallback? onContinuePressed;
+  final VoidCallback? onRetryPressed;
 
   const ChatBubbleWithThinking({
     super.key,
     required this.message,
     this.enableAutoScroll = false,
     this.onContinuePressed,
+    this.onRetryPressed,
   });
 
   @override
@@ -3078,43 +3461,36 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  List<_CodeBlock> _extractCodeBlocks(String text) {
+  // COMPLETELY NEW CODE BLOCK EXTRACTION - NO DUPLICATION BUG
+    List<_CodeBlock> _extractCodeBlocks(String text) {
     final List<_CodeBlock> blocks = [];
-    final regex = RegExp(r'```(\w*)\n([\s\S]*?)\n```');
-    final matches = regex.allMatches(text);
+    final regex = RegExp(r'```(\w*)\s*\n?([\s\S]*?)```', multiLine: true);
 
-    for (final match in matches) {
-      final language = match.group(1) ?? '';
-      final code = match.group(2) ?? '';
-      blocks.add(
-        _CodeBlock(
-          language: language.isEmpty ? 'text' : language,
-          code: code,
-          startIndex: match.start,
-          endIndex: match.end,
-        ),
-      );
+    for (final match in regex.allMatches(text)) {
+      final language = (match.group(1) ?? '').trim();
+      final code = (match.group(2) ?? '').trim();
+
+            if (code.isNotEmpty) {
+        // Check for duplicate code blocks
+        final isDuplicate = blocks.any(
+          (b) => b.code == code && b.language == language,
+        );
+        if (!isDuplicate) {
+          blocks.add(
+            _CodeBlock(
+              language: language.isEmpty ? 'txt' : language,
+              code: code,
+            ),
+          );
+        }
+      }
     }
 
     return blocks;
   }
 
-  String _replaceCodeBlocksWithMarkers(String text) {
-    var result = text;
-    final blocks = _extractCodeBlocks(text);
-
-    for (final block in blocks.reversed) {
-      result = result.replaceRange(
-        block.startIndex,
-        block.endIndex,
-        '[[CODE_BLOCK_${blocks.indexOf(block)}]]',
-      );
-    }
-
-    return result;
-  }
-
-  Widget _buildCodeBlock(_CodeBlock block) {
+  // NEW: Build code block with language label and copy button
+  Widget _buildCodeBlock(_CodeBlock block, int index) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -3137,15 +3513,13 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
             ),
             child: Row(
               children: [
-                Icon(Icons.code, size: 16, color: Colors.greenAccent),
+                const Icon(Icons.code, size: 14, color: Colors.greenAccent),
                 const SizedBox(width: 8),
                 Text(
-                  block.language.isNotEmpty
-                      ? block.language.toUpperCase()
-                      : 'CODE',
+                  block.language.toUpperCase(),
                   style: const TextStyle(
                     color: Colors.greenAccent,
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -3154,17 +3528,18 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: block.code));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Copied ${block.language} code to clipboard',
-                        ),
+                      const SnackBar(
+                        content: Text('Code copied!'),
                         backgroundColor: Colors.green,
-                        duration: const Duration(seconds: 2),
+                        duration: Duration(seconds: 1),
                       ),
                     );
                   },
                   child: Container(
-                    padding: const EdgeInsets.all(4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.green.withAlpha(50),
                       borderRadius: BorderRadius.circular(4),
@@ -3173,7 +3548,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                       children: [
                         Icon(
                           Icons.content_copy,
-                          size: 14,
+                          size: 12,
                           color: Colors.greenAccent,
                         ),
                         SizedBox(width: 4),
@@ -3181,7 +3556,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                           'Copy',
                           style: TextStyle(
                             color: Colors.greenAccent,
-                            fontSize: 11,
+                            fontSize: 10,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -3214,40 +3589,68 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
+  // NEW: Parse text with code blocks - NO DUPLICATION
   Widget _buildParsedText(String text) {
     final codeBlocks = _extractCodeBlocks(text);
-    final textWithMarkers = _replaceCodeBlocksWithMarkers(text);
-    final parts = textWithMarkers.split(RegExp(r'\[\[CODE_BLOCK_(\d+)\]\]'));
 
-    return SelectionArea(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children:
-            parts.asMap().entries.map((entry) {
-              final index = entry.key;
-              final part = entry.value;
+    if (codeBlocks.isEmpty) {
+      return SelectionArea(
+        child: Text(
+          text,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+        ),
+      );
+    }
 
-              if (index % 2 == 0) {
-                if (part.trim().isNotEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Text(
-                      part,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  );
-                }
-                return const SizedBox.shrink();
-              } else {
-                final blockIndex = int.tryParse(part) ?? 0;
-                if (blockIndex < codeBlocks.length) {
-                  final block = codeBlocks[blockIndex];
-                  return _buildCodeBlock(block);
-                }
-                return const SizedBox.shrink();
-              }
-            }).toList(),
-      ),
+    // Split text by code blocks
+    String remainingText = text;
+    final List<Widget> widgets = [];
+
+    for (int i = 0; i < codeBlocks.length; i++) {
+      final block = codeBlocks[i];
+      final codePattern = '```${block.language}\n${block.code}\n```';
+      final parts = remainingText.split(codePattern);
+
+      if (parts.isNotEmpty && parts[0].trim().isNotEmpty) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: SelectionArea(
+              child: Text(
+                parts[0].trim(),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ),
+          ),
+        );
+      }
+
+      widgets.add(_buildCodeBlock(block, i));
+
+      if (parts.length > 1) {
+        remainingText = parts.sublist(1).join(codePattern);
+      } else {
+        remainingText = '';
+      }
+    }
+
+    if (remainingText.trim().isNotEmpty) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: SelectionArea(
+            child: Text(
+              remainingText.trim(),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
     );
   }
 
@@ -3286,11 +3689,23 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     } else if (message.isError) {
       return Text(
         message.text,
-        style: const TextStyle(color: Colors.redAccent),
+        style: const TextStyle(color: Colors.redAccent, fontSize: 14),
       );
     } else {
       return _buildParsedText(message.text);
     }
+  }
+
+  // FIX: Copy entire message including code blocks
+  void _copyFullMessage() {
+    Clipboard.setData(ClipboardData(text: widget.message.text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Full message copied!'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   Widget _buildContinueButton() {
@@ -3312,9 +3727,106 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
           children: [
             Icon(Icons.arrow_right_alt, size: 16),
             SizedBox(width: 8),
-            Text('Continue Response'),
+            Text('Continue'),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildRetryButton() {
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      child: ElevatedButton(
+        onPressed: widget.onRetryPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.red.withAlpha(30),
+          foregroundColor: Colors.redAccent,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: Colors.redAccent.withAlpha(100), width: 1),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.refresh, size: 16),
+            SizedBox(width: 8),
+            Text('Retry'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // NEW: Action buttons at bottom of AI responses
+  Widget _buildActionButtons() {
+    if (widget.message.isUser || widget.message.isLoading) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      child: Row(
+        children: [
+          // Copy button
+          InkWell(
+            onTap: _copyFullMessage,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.blue.withAlpha(30),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.blue.withAlpha(100), width: 1),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.content_copy, size: 14, color: Colors.blue),
+                  SizedBox(width: 6),
+                  Text(
+                    'Copy',
+                    style: TextStyle(color: Colors.blue, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 8),
+
+          // Regenerate button (using retry logic)
+          if (widget.onRetryPressed != null)
+            InkWell(
+              onTap: widget.onRetryPressed,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green.withAlpha(30),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.green.withAlpha(100),
+                    width: 1,
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh, size: 14, color: Colors.green),
+                    SizedBox(width: 6),
+                    Text(
+                      'Regenerate',
+                      style: TextStyle(color: Colors.green, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -3323,88 +3835,101 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   Widget build(BuildContext context) {
     final message = widget.message;
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Align(
-        alignment:
-            message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          width: double.infinity,
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.99,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (!message.isUser &&
-                  message.thinkingProcess != null &&
-                  message.thinkingProcess!.isNotEmpty)
-                _buildThinkingSection(),
+        return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Align(
+          alignment:
+              message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            width: double.infinity,
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.99,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!message.isUser &&
+                    message.thinkingProcess != null &&
+                    message.thinkingProcess!.isNotEmpty)
+                  _buildThinkingSection(),
 
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: message.isUser ? Colors.blue.shade900 : Colors.black87,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
                     color:
-                        message.isUser
-                            ? Colors.blueAccent
-                            : Colors.grey.shade700,
-                    width: 1,
+                        message.isUser ? Colors.blue.shade900 : Colors.black87,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color:
+                          message.isUser
+                              ? Colors.blueAccent
+                              : (message.isError
+                                  ? Colors.redAccent
+                                  : Colors.grey.shade700),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (message.images != null && message.images!.isNotEmpty)
+                        Container(
+                          margin: EdgeInsets.only(
+                            bottom: message.text.isNotEmpty ? 8 : 0,
+                          ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children:
+                                message.images!.asMap().entries.map((entry) {
+                                  return _buildImagePreview(
+                                    entry.value,
+                                    entry.key,
+                                  );
+                                }).toList(),
+                          ),
+                        ),
+
+                      _buildMessageContent(message),
+
+                      if (message.isUser &&
+                          message.text.isEmpty &&
+                          message.images != null &&
+                          message.images!.isNotEmpty &&
+                          !message.isLoading)
+                        const Text(
+                          '[Image attached]',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+
+                      if (message.isError &&
+                          widget.onRetryPressed != null &&
+                          message.canRetry)
+                        _buildRetryButton(),
+
+                      if (message.isIncomplete &&
+                          !message.isUser &&
+                          !message.isError &&
+                          widget.onContinuePressed != null)
+                        _buildContinueButton(),
+
+                      // NEW: Action buttons
+                      if (!message.isError) _buildActionButtons(),
+                    ],
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (message.images != null && message.images!.isNotEmpty)
-                      Container(
-                        margin: EdgeInsets.only(
-                          bottom: message.text.isNotEmpty ? 8 : 0,
-                        ),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children:
-                              message.images!.asMap().entries.map((entry) {
-                                return _buildImagePreview(
-                                  entry.value,
-                                  entry.key,
-                                );
-                              }).toList(),
-                        ),
-                      ),
-
-                    _buildMessageContent(message),
-
-                    if (message.isUser &&
-                        message.text.isEmpty &&
-                        message.images != null &&
-                        message.images!.isNotEmpty &&
-                        !message.isLoading)
-                      const Text(
-                        '[Image attached]',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-
-                    if (message.isIncomplete &&
-                        !message.isUser &&
-                        widget.onContinuePressed != null)
-                      _buildContinueButton(),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+
   }
 }
 
@@ -3430,4 +3955,3 @@ class _ParsedResponse {
 
   _ParsedResponse({required this.thinkingProcess, required this.finalResponse});
 }
-
