@@ -10,8 +10,6 @@ import 'dart:async';
 import 'package:arina_cave/services/ad_service.dart';
 import 'package:arina_cave/widgets/ad_banner.dart';
 
-
-
 class ArinaNewsScreen extends StatefulWidget {
   const ArinaNewsScreen({super.key});
 
@@ -25,8 +23,8 @@ class _ArinaNewsScreenState extends State<ArinaNewsScreen>
   final RefreshController _refreshController = RefreshController();
   List<NewsArticle> _breakingNews = [];
   bool _isLoadingBreakingNews = true;
-    int _articleViewCount = 0;
-  
+  int _articleViewCount = 0;
+
   // Curated mobile-friendly news sources
   final List<NewsSource> _newsSources = [
     NewsSource(
@@ -44,44 +42,47 @@ class _ArinaNewsScreenState extends State<ArinaNewsScreen>
       color: Colors.green,
     ),
     // 1. France 24 English
-// Excellent 24/7 coverage with a French/European perspective.
-NewsSource(
-  name: 'France 24',
-  url: 'https://www.france24.com/en/live',
-  rssUrl: 'https://www.france24.com/en/rss',
-  icon: Icons.public, // Or a custom flag icon
-  color: Colors.blueAccent,
-),
+    // Excellent 24/7 coverage with a French/European perspective.
+    NewsSource(
+      name: 'France 24',
+      url: 'https://www.france24.com/en/live',
+      rssUrl: 'https://www.france24.com/en/rss',
+      icon: Icons.public, // Or a custom flag icon
+      color: Colors.blueAccent,
+    ),
 
-// 2. NHK World-Japan
-// The best source for Asian/Japanese news in English. Very reliable stream.
-NewsSource(
-  name: 'NHK World',
-  url: 'https://www3.nhk.or.jp/nhkworld/en/live/',
-  rssUrl: 'https://www3.nhk.or.jp/nhkworld/en/news/list/index.xml',
-  icon: Icons.circle, // Resembles the Japanese rising sun
-  color: Colors.deepPurpleAccent, // NHK's brand color is often a distinct pink/red
-),
+    // 2. NHK World-Japan
+    // The best source for Asian/Japanese news in English. Very reliable stream.
+    NewsSource(
+      name: 'NHK World',
+      url: 'https://www3.nhk.or.jp/nhkworld/en/live/',
+      rssUrl: 'https://www3.nhk.or.jp/nhkworld/en/news/list/index.xml',
+      icon: Icons.circle, // Resembles the Japanese rising sun
+      color:
+          Colors
+              .deepPurpleAccent, // NHK's brand color is often a distinct pink/red
+    ),
 
-// 3. Sky News (UK/International)
-// British breaking news, distinct from the BBC.
-NewsSource(
-  name: 'Sky News',
-  url: 'https://news.sky.com/watch-live',
-  rssUrl: 'https://feeds.skynews.com/feeds/rss/world.xml',
-  icon: Icons.cloud,
-  color: Colors.blue,
-),
+    // 3. Sky News (UK/International)
+    // British breaking news, distinct from the BBC.
+    NewsSource(
+      name: 'Sky News',
+      url: 'https://news.sky.com/watch-live',
+      rssUrl: 'https://feeds.skynews.com/feeds/rss/world.xml',
+      icon: Icons.cloud,
+      color: Colors.blue,
+    ),
 
-// 4. CNA (Channel News Asia)
-// Singapore-based English broadcaster; great for SE Asia business/news.
-NewsSource(
-  name: 'CNA',
-  url: 'https://www.channelnewsasia.com/watch',
-  rssUrl: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml',
-  icon: Icons.trending_up, // Focuses heavily on business/markets
-  color: Colors.blue,
-),
+    // 4. CNA (Channel News Asia)
+    // Singapore-based English broadcaster; great for SE Asia business/news.
+    NewsSource(
+      name: 'CNA',
+      url: 'https://www.channelnewsasia.com/watch',
+      rssUrl:
+          'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml',
+      icon: Icons.trending_up, // Focuses heavily on business/markets
+      color: Colors.blue,
+    ),
     NewsSource(
       name: 'BBC',
       url: 'https://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm',
@@ -120,8 +121,7 @@ NewsSource(
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
-      setState(() {
-      });
+      setState(() {});
     });
     _fetchBreakingNews();
   }
@@ -181,7 +181,7 @@ NewsSource(
       final response = await http.get(
         Uri.parse('http://feeds.reuters.com/reuters/topNews'),
       );
-      
+
       if (response.statusCode == 200) {
         return _parseRssFeedWithPackage(response.body, 'Reuters');
       }
@@ -195,14 +195,14 @@ NewsSource(
 
   List<NewsArticle> _parseRssFeedWithPackage(String xml, String sourceName) {
     final articles = <NewsArticle>[];
-    
+
     try {
       // Use the rss_dart package to parse the XML properly
       final channel = RssFeed.parse(xml);
-      
+
       for (var item in channel.items.take(15)) {
         String? imageUrl;
-        
+
         // Try to extract image from different possible fields
         if (item.media != null && item.media!.contents.isNotEmpty) {
           imageUrl = item.media!.contents.first.url;
@@ -210,30 +210,38 @@ NewsSource(
           imageUrl = item.enclosure!.url;
         } else if (item.description != null) {
           // Try to extract image from HTML description
-          final imgMatch = RegExp(r'<img[^>]+src="([^"]+)"').firstMatch(item.description!);
+          final imgMatch = RegExp(
+            r'<img[^>]+src="([^"]+)"',
+          ).firstMatch(item.description!);
           if (imgMatch != null) {
             imageUrl = imgMatch.group(1);
           }
         }
-        
+
         final title = item.title?.trim() ?? 'No title';
         final description = _cleanHtml(item.description ?? '');
         final link = item.link?.trim() ?? 'https://www.example.com';
-        final pubDate = item.pubDate?.trim() ?? DateTime.now().toIso8601String();
-        
-        articles.add(NewsArticle(
-          title: title.length > 100 ? '${title.substring(0, 100)}...' : title,
-          description: description.length > 150 ? '${description.substring(0, 150)}...' : description,
-          url: link,
-          imageUrl: imageUrl ?? _getRandomNewsImage(),
-          source: sourceName,
-          publishedAt: pubDate,
-        ));
+        final pubDate =
+            item.pubDate?.trim() ?? DateTime.now().toIso8601String();
+
+        articles.add(
+          NewsArticle(
+            title: title.length > 100 ? '${title.substring(0, 100)}...' : title,
+            description:
+                description.length > 150
+                    ? '${description.substring(0, 150)}...'
+                    : description,
+            url: link,
+            imageUrl: imageUrl ?? _getRandomNewsImage(),
+            source: sourceName,
+            publishedAt: pubDate,
+          ),
+        );
       }
     } catch (e) {
       debugPrint('RSS parse error for $sourceName: $e');
     }
-    
+
     return articles.isNotEmpty ? articles : _getMockNews();
   }
 
@@ -265,7 +273,8 @@ NewsSource(
         title: 'Breaking: Major Tech Conference Announcement',
         description: 'New innovations revealed at annual tech summit',
         url: 'https://www.bbc.com/news/technology',
-        imageUrl: 'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=800',
+        imageUrl:
+            'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=800',
         source: 'Tech News',
         publishedAt: DateTime.now().toIso8601String(),
       ),
@@ -273,79 +282,88 @@ NewsSource(
         title: 'Emergency Weather Alert',
         description: 'Severe weather conditions expected in multiple regions',
         url: 'https://www.bbc.com/news/world',
-        imageUrl: 'https://images.unsplash.com/photo-1592210454359-9043f067919b?w=800',
+        imageUrl:
+            'https://images.unsplash.com/photo-1592210454359-9043f067919b?w=800',
         source: 'Weather Channel',
-        publishedAt: DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
+        publishedAt:
+            DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
       ),
       NewsArticle(
         title: 'Flutter 3.0 Released with Major Updates',
-        description: 'Google announces new features for cross-platform development',
+        description:
+            'Google announces new features for cross-platform development',
         url: 'https://www.bbc.com/news/technology',
-        imageUrl: 'https://images.unsplash.com/photo-1551650975-87deedd944c3?w=800',
+        imageUrl:
+            'https://images.unsplash.com/photo-1551650975-87deedd944c3?w=800',
         source: 'BBC Technology',
-        publishedAt: DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
+        publishedAt:
+            DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
       ),
       NewsArticle(
         title: 'Sustainable Energy Breakthrough',
         description: 'New solar panel technology achieves record efficiency',
         url: 'https://www.bbc.com/news/science',
-        imageUrl: 'https://images.unsplash.com/photo-1466611653911-95081537e5b7?w=800',
+        imageUrl:
+            'https://images.unsplash.com/photo-1466611653911-95081537e5b7?w=800',
         source: 'Science Daily',
-        publishedAt: DateTime.now().subtract(const Duration(hours: 3)).toIso8601String(),
+        publishedAt:
+            DateTime.now().subtract(const Duration(hours: 3)).toIso8601String(),
       ),
       NewsArticle(
         title: 'Global Markets Show Recovery Signs',
         description: 'Stock markets worldwide show positive momentum',
         url: 'https://www.bbc.com/news/business',
-        imageUrl: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800',
+        imageUrl:
+            'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800',
         source: 'BBC Business',
-        publishedAt: DateTime.now().subtract(const Duration(hours: 4)).toIso8601String(),
+        publishedAt:
+            DateTime.now().subtract(const Duration(hours: 4)).toIso8601String(),
       ),
     ];
   }
 
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    appBar: AppBar(
-      title: const Text(
-        'ArinaCave News',
-        style: TextStyle(fontWeight: FontWeight.bold),
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'ArinaCave News',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          tabs: const [
+            Tab(icon: Icon(Icons.today), text: 'Daily'),
+            Tab(icon: Icon(Icons.new_releases), text: 'Breaking'),
+            Tab(icon: Icon(Icons.source), text: 'Sources'),
+          ],
+        ),
       ),
-      bottom: TabBar(
-        controller: _tabController,
-        indicatorColor: Colors.white,
-        tabs: const [
-          Tab(icon: Icon(Icons.today), text: 'Daily'),
-          Tab(icon: Icon(Icons.new_releases), text: 'Breaking'),
-          Tab(icon: Icon(Icons.source), text: 'Sources'),
+      body: Column(
+        children: [
+          // MAIN CONTENT AREA - Takes most of the space
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // TAB 1: Daily News WebView
+                _buildDailyNewsTab(),
+
+                // TAB 2: Breaking News
+                _buildBreakingNewsTab(),
+
+                // TAB 3: All News Sources
+                _buildSourcesTab(),
+              ],
+            ),
+          ),
+
+          const AdBanner(),
         ],
       ),
-    ),
-    body: Column(
-      children: [
-        // MAIN CONTENT AREA - Takes most of the space
-        Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              // TAB 1: Daily News WebView
-              _buildDailyNewsTab(),
-
-              // TAB 2: Breaking News
-              _buildBreakingNewsTab(),
-
-              // TAB 3: All News Sources
-              _buildSourcesTab(),
-            ],
-          ),
-        ),
-        
-        const AdBanner(),
-      ],
-    ),
-  );
-}
+    );
+  }
 
   // TAB 1: Daily News (Embedded WebView)
   Widget _buildDailyNewsTab() {
@@ -363,18 +381,20 @@ Widget build(BuildContext context) {
                   value: _newsSources[0],
                   isExpanded: true,
                   underline: const SizedBox(),
-                  items: _newsSources.map((source) {
-                    return DropdownMenuItem<NewsSource>(
-                      value: source,
-                      child: Text(
-                        source.name,
-                        style: TextStyle(
-                          color: source.isLocal ? Colors.green : null,
-                          fontWeight: source.isLocal ? FontWeight.bold : null,
-                        ),
-                      ),
-                    );
-                  }).toList(),
+                  items:
+                      _newsSources.map((source) {
+                        return DropdownMenuItem<NewsSource>(
+                          value: source,
+                          child: Text(
+                            source.name,
+                            style: TextStyle(
+                              color: source.isLocal ? Colors.green : null,
+                              fontWeight:
+                                  source.isLocal ? FontWeight.bold : null,
+                            ),
+                          ),
+                        );
+                      }).toList(),
                   onChanged: (source) {
                     if (source != null) {
                       _openNewsSource(source);
@@ -386,9 +406,7 @@ Widget build(BuildContext context) {
           ),
         ),
         const Divider(height: 1),
-        Expanded(
-          child: WebViewScreen(source: _newsSources[0]),
-        ),
+        Expanded(child: WebViewScreen(source: _newsSources[0])),
       ],
     );
   }
@@ -455,11 +473,9 @@ Widget build(BuildContext context) {
           else if (_breakingNews.isEmpty)
             _buildNewsFallback()
           else
-            ..._breakingNews
-                .asMap()
-                .entries
-                .map((entry) => _buildNewsArticleCard(entry.value, entry.key == 0))
-                ,
+            ..._breakingNews.asMap().entries.map(
+              (entry) => _buildNewsArticleCard(entry.value, entry.key == 0),
+            ),
         ],
       ),
     );
@@ -534,7 +550,10 @@ Widget build(BuildContext context) {
               if (source.isLocal) ...[
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.green.shade100,
                     borderRadius: BorderRadius.circular(12),
@@ -596,11 +615,7 @@ Widget build(BuildContext context) {
                         color: Colors.white,
                       ),
                       const SizedBox(height: 8),
-                      Container(
-                        width: 100,
-                        height: 12,
-                        color: Colors.white,
-                      ),
+                      Container(width: 100, height: 12, color: Colors.white),
                     ],
                   ),
                 ),
@@ -687,16 +702,19 @@ Widget build(BuildContext context) {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: article.imageUrl.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: article.imageUrl,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            color: Colors.grey.shade200,
-                          ),
-                          errorWidget: (context, url, error) => _buildPlaceholderIcon(),
-                        )
-                      : _buildPlaceholderIcon(),
+                  child:
+                      article.imageUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                            imageUrl: article.imageUrl,
+                            fit: BoxFit.cover,
+                            placeholder:
+                                (context, url) =>
+                                    Container(color: Colors.grey.shade200),
+                            errorWidget:
+                                (context, url, error) =>
+                                    _buildPlaceholderIcon(),
+                          )
+                          : _buildPlaceholderIcon(),
                 ),
               ),
               const SizedBox(width: 12),
@@ -707,7 +725,9 @@ Widget build(BuildContext context) {
                     if (isTop)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.red,
                           borderRadius: BorderRadius.circular(4),
@@ -773,21 +793,15 @@ Widget build(BuildContext context) {
   Widget _buildPlaceholderIcon() {
     return Container(
       color: Colors.grey.shade200,
-      child: Icon(
-        Icons.article,
-        size: 32,
-        color: Colors.grey.shade400,
-      ),
+      child: Icon(Icons.article, size: 32, color: Colors.grey.shade400),
     );
   }
 
   void _openNewsSource(NewsSource source) {
-    _showInterstitialIfNeeded(); 
+    _showInterstitialIfNeeded();
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => WebViewScreen(source: source),
-      ),
+      MaterialPageRoute(builder: (context) => WebViewScreen(source: source)),
     );
   }
 
@@ -802,22 +816,22 @@ Widget build(BuildContext context) {
     }
   }
 
- Future<void> _launchURL(String url) async {
-  try {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      throw 'Could not launch $url';
-    }
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open: $e')),
-      );
+  Future<void> _launchURL(String url) async {
+    try {
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not launch $url';
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not open: $e')));
+      }
     }
   }
-}
 
   String _formatArticleDate(String dateString) {
     try {
@@ -866,9 +880,18 @@ Widget build(BuildContext context) {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              _buildFeatureItem(Icons.refresh, 'Pull to refresh for latest news'),
-              _buildFeatureItem(Icons.open_in_new, 'Tap any article to read full story'),
-              _buildFeatureItem(Icons.web, 'WebView integration for full browsing'),
+              _buildFeatureItem(
+                Icons.refresh,
+                'Pull to refresh for latest news',
+              ),
+              _buildFeatureItem(
+                Icons.open_in_new,
+                'Tap any article to read full story',
+              ),
+              _buildFeatureItem(
+                Icons.web,
+                'WebView integration for full browsing',
+              ),
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -893,7 +916,7 @@ Widget build(BuildContext context) {
           const SizedBox(width: 12),
           Expanded(child: Text(text)),
         ],
-      )
+      ),
     );
   }
 }
@@ -915,23 +938,24 @@ class _WebViewScreenState extends State<WebViewScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (String url) {
-            setState(() => _isLoading = true);
-          },
-          onPageFinished: (String url) {
-            setState(() => _isLoading = false);
-          },
-          onWebResourceError: (WebResourceError error) {
-            debugPrint('WebView error: ${error.description}');
-            setState(() => _isLoading = false);
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.source.url));
+    _controller =
+        WebViewController()
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setNavigationDelegate(
+            NavigationDelegate(
+              onPageStarted: (String url) {
+                setState(() => _isLoading = true);
+              },
+              onPageFinished: (String url) {
+                setState(() => _isLoading = false);
+              },
+              onWebResourceError: (WebResourceError error) {
+                debugPrint('WebView error: ${error.description}');
+                setState(() => _isLoading = false);
+              },
+            ),
+          )
+          ..loadRequest(Uri.parse(widget.source.url));
   }
 
   @override

@@ -13,21 +13,21 @@ const String _interstitialAdUnitId = 'ca-app-pub-1472609237394607/3819175757';
 
 class BrowserScreen extends StatefulWidget {
   final String? initialUrl;
-  
+
   const BrowserScreen({
     super.key,
     this.initialUrl,
   });
-  
+
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
 }
 
-class _BrowserScreenState extends State<BrowserScreen> 
+class _BrowserScreenState extends State<BrowserScreen>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   // WebView controller
   WebViewController? _controller;
-  
+
   // UI state
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocusNode = FocusNode();
@@ -36,19 +36,20 @@ class _BrowserScreenState extends State<BrowserScreen>
   String _currentUrl = '';
   String _currentTitle = '';
   bool _showHomepage = true;
-  bool _showSearchSuggestions = true;
+  bool _showSearchSuggestions = false;
   final List<String> _history = [];
   int _navigationCount = 0;
-  
+
   // AdMob
   BannerAd? _bannerAd;
   InterstitialAd? _interstitialAd;
   bool _isBannerAdLoaded = false;
   bool _isInterstitialAdLoaded = false;
-  
-  // User agent for SupaCave browser
-  static const String _userAgent = 'Mozilla/5.0 (Linux; Android 10; SupaCave Browser) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
-  
+
+  // User agent for ArinaCave browser
+  static const String _userAgent =
+      'Mozilla/5.0 (Linux; Android 10; ArinaCave Browser) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+
   // Search engines
   static const Map<String, Map<String, dynamic>> _searchEngines = {
     'google': {
@@ -82,8 +83,8 @@ class _BrowserScreenState extends State<BrowserScreen>
       'color': Colors.grey,
     },
   };
-  
-  // Quick apps for homepage
+
+  // Quick apps for homepage - SCROLLABLE
   static const List<Map<String, dynamic>> _quickApps = [
     {
       'name': 'Google',
@@ -91,6 +92,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.search,
       'color': Colors.blue,
       'description': 'Search the web',
+      'category': 'Search',
     },
     {
       'name': 'YouTube',
@@ -98,21 +100,23 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.play_circle_filled,
       'color': Colors.red,
       'description': 'Watch videos',
+      'category': 'Entertainment',
     },
-     {
+    {
       'name': 'DeepSeek',
       'url': 'https://chat.deepseek.com',
-      'icon': Icons.smart_toy, // or Icons.chat, Icons.psychology
-      'color': Colors.deepPurple, // Purple color for AI
+      'icon': Icons.psychology,
+      'color': Colors.deepPurple,
       'description': 'AI Assistant',
+      'category': 'AI',
     },
-   
     {
       'name': 'TikTok',
       'url': 'https://www.tiktok.com',
-      'icon': Icons.music_note, // or Icons.video_library
-      'color': Colors.black, // TikTok's brand color
+      'icon': Icons.music_note,
+      'color': Colors.black,
       'description': 'Short videos',
+      'category': 'Entertainment',
     },
     {
       'name': 'GitHub',
@@ -120,6 +124,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.code,
       'color': Colors.black,
       'description': 'Code repository',
+      'category': 'Development',
     },
     {
       'name': 'ChatGPT',
@@ -127,6 +132,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.smart_toy,
       'color': Colors.green,
       'description': 'AI Assistant',
+      'category': 'AI',
     },
     {
       'name': 'Twitter',
@@ -134,6 +140,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.chat,
       'color': Colors.blue,
       'description': 'Social media',
+      'category': 'Social',
     },
     {
       'name': 'Reddit',
@@ -141,6 +148,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.forum,
       'color': Colors.orange,
       'description': 'Online community',
+      'category': 'Social',
     },
     {
       'name': 'Wikipedia',
@@ -148,6 +156,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.menu_book,
       'color': Colors.grey,
       'description': 'Free encyclopedia',
+      'category': 'Reference',
     },
     {
       'name': 'Amazon',
@@ -155,6 +164,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.shopping_cart,
       'color': Colors.orange,
       'description': 'Online shopping',
+      'category': 'Shopping',
     },
     {
       'name': 'Instagram',
@@ -162,6 +172,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.camera_alt,
       'color': Colors.pink,
       'description': 'Photo sharing',
+      'category': 'Social',
     },
     {
       'name': 'Facebook',
@@ -169,6 +180,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.people,
       'color': Colors.blue,
       'description': 'Social network',
+      'category': 'Social',
     },
     {
       'name': 'Netflix',
@@ -176,6 +188,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.movie,
       'color': Colors.red,
       'description': 'Stream movies',
+      'category': 'Entertainment',
     },
     {
       'name': 'Spotify',
@@ -183,9 +196,58 @@ class _BrowserScreenState extends State<BrowserScreen>
       'icon': Icons.music_note,
       'color': Colors.green,
       'description': 'Music streaming',
+      'category': 'Entertainment',
+    },
+    {
+      'name': 'WhatsApp',
+      'url': 'https://web.whatsapp.com',
+      'icon': Icons.chat_bubble,
+      'color': Colors.green,
+      'description': 'Messaging',
+      'category': 'Social',
+    },
+    {
+      'name': 'Telegram',
+      'url': 'https://web.telegram.org',
+      'icon': Icons.send,
+      'color': Colors.blue,
+      'description': 'Secure messaging',
+      'category': 'Social',
+    },
+    {
+      'name': 'Stack Overflow',
+      'url': 'https://stackoverflow.com',
+      'icon': Icons.help,
+      'color': Colors.orange,
+      'description': 'Programming Q&A',
+      'category': 'Development',
+    },
+    {
+      'name': 'Medium',
+      'url': 'https://medium.com',
+      'icon': Icons.article,
+      'color': Colors.black,
+      'description': 'Read articles',
+      'category': 'Reading',
+    },
+    {
+      'name': 'Quora',
+      'url': 'https://www.quora.com',
+      'icon': Icons.question_answer,
+      'color': Colors.red,
+      'description': 'Q&A community',
+      'category': 'Reference',
+    },
+    {
+      'name': 'Pinterest',
+      'url': 'https://www.pinterest.com',
+      'icon': Icons.push_pin,
+      'color': Colors.red,
+      'description': 'Discover ideas',
+      'category': 'Social',
     },
   ];
-  
+
   // Settings
   bool _showAds = true;
   String _defaultSearchEngine = 'google';
@@ -214,71 +276,65 @@ class _BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<void> _initializeWebView() async {
-    _controller = WebViewController();
-    
-    // Configure the controller
-    _controller!
+    _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
-      ..setUserAgent(_desktopMode 
+      ..setUserAgent(_desktopMode
           ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           : _userAgent)
       ..setNavigationDelegate(NavigationDelegate(
         onProgress: (progress) {
-            // Check if widget is still mounted before updating state
-            if (mounted) {
-              setState(() {
-                _progress = progress / 100;
-                _isLoading = progress < 100;
-              });
-            }
-          },
+          if (mounted) {
+            setState(() {
+              _progress = progress / 100;
+              _isLoading = progress < 100;
+            });
+          }
+        },
         onPageStarted: (url) {
-            // Check if widget is still mounted before updating state
-            if (mounted) {
-              setState(() {
-                _currentUrl = url;
-                _isLoading = true;
-                _showHomepage = false;
-                _urlController.text = url;
-              });
-            }
-            _navigationCount++;
-            _maybeShowInterstitialAd();
+          if (mounted) {
+            setState(() {
+              _currentUrl = url;
+              _isLoading = true;
+              _showHomepage = false;
+              _urlController.text = url;
+              _showSearchSuggestions = false;
+            });
+          }
+          _navigationCount++;
+          _maybeShowInterstitialAd();
 
-            // Add to history
-            if (_history.isEmpty || _history.last != url) {
-              _history.add(url);
-            }
-          },
+          if (_history.isEmpty || _history.last != url) {
+            _history.add(url);
+          }
+        },
         onPageFinished: (url) async {
-            final title = await _controller!.getTitle();
-            // Check if widget is still mounted before updating state
-            if (mounted) {
-              setState(() {
-                _currentUrl = url;
-                _isLoading = false;
-                _currentTitle = title ?? 'SupaCave Browser';
-                _urlController.text = url;
-              });
-            }
-          },
+          final title = await _controller!.getTitle();
+          if (mounted) {
+            setState(() {
+              _currentUrl = url;
+              _isLoading = false;
+              _currentTitle = title ?? 'ArinaCave Browser';
+              _urlController.text = url;
+            });
+          }
+        },
         onUrlChange: (change) {
-          setState(() {
-            _currentUrl = change.url ?? '';
-            _urlController.text = _currentUrl;
-          });
+          if (mounted) {
+            setState(() {
+              _currentUrl = change.url ?? '';
+              _urlController.text = _currentUrl;
+            });
+          }
         },
         onNavigationRequest: (request) {
-          // Handle external URLs
-          if (request.url.startsWith('mailto:') || 
+          if (request.url.startsWith('mailto:') ||
               request.url.startsWith('tel:') ||
               request.url.startsWith('sms:')) {
             _launchExternalUrl(request.url);
             return NavigationDecision.prevent;
           }
-          
-          // Handle downloads
+
           if (request.url.contains('/download/') ||
               request.url.endsWith('.apk') ||
               request.url.endsWith('.zip') ||
@@ -288,18 +344,19 @@ class _BrowserScreenState extends State<BrowserScreen>
             _showDownloadDialog(request.url);
             return NavigationDecision.prevent;
           }
-          
+
           return NavigationDecision.navigate;
         },
       ))
-      ..addJavaScriptChannel('SupaCave', 
-          onMessageReceived: (JavaScriptMessage message) {
-        if (kDebugMode) {
-          print('JavaScript: ${message.message}');
-        }
-      });
-    
-    // Load initial URL if provided
+      ..addJavaScriptChannel(
+        'ArinaCave',
+        onMessageReceived: (JavaScriptMessage message) {
+          if (kDebugMode) {
+            print('JavaScript: ${message.message}');
+          }
+        },
+      );
+
     if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
       await _loadUrl(widget.initialUrl!);
     }
@@ -319,18 +376,14 @@ class _BrowserScreenState extends State<BrowserScreen>
       size: AdSize.banner,
       listener: BannerAdListener(
         onAdLoaded: (ad) {
-          setState(() {
-            _isBannerAdLoaded = true;
-          });
-          if (kDebugMode) {
-            print('Banner ad loaded');
+          if (mounted) {
+            setState(() => _isBannerAdLoaded = true);
           }
+          if (kDebugMode) print('Banner ad loaded');
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          if (kDebugMode) {
-            print('Banner ad failed to load: $error');
-          }
+          if (kDebugMode) print('Banner ad failed to load: $error');
         },
       ),
     );
@@ -345,26 +398,22 @@ class _BrowserScreenState extends State<BrowserScreen>
         onAdLoaded: (ad) {
           _interstitialAd = ad;
           _isInterstitialAdLoaded = true;
-          if (kDebugMode) {
-            print('Interstitial ad loaded');
-          }
+          if (kDebugMode) print('Interstitial ad loaded');
         },
         onAdFailedToLoad: (error) {
-          if (kDebugMode) {
-            print('Interstitial ad failed to load: $error');
-          }
+          if (kDebugMode) print('Interstitial ad failed to load: $error');
         },
       ),
     );
   }
 
   void _maybeShowInterstitialAd() {
-    if (_showAds && 
-        _isInterstitialAdLoaded && 
+    if (_showAds &&
+        _isInterstitialAdLoaded &&
         _navigationCount % _adFrequency == 0 &&
         _navigationCount > 0) {
       _interstitialAd?.show();
-      _loadInterstitialAd(); // Load next one
+      _loadInterstitialAd();
     }
   }
 
@@ -373,25 +422,24 @@ class _BrowserScreenState extends State<BrowserScreen>
 
     String finalUrl = input.trim();
 
-    // Check if it's a search query
     if (!finalUrl.contains('.') || finalUrl.contains(' ')) {
       final engine = _searchEngines[_defaultSearchEngine]!;
       finalUrl = '${engine['url']}${Uri.encodeComponent(finalUrl)}';
-    }
-    // Add https:// if missing
-    else if (!finalUrl.startsWith('http://') &&
+    } else if (!finalUrl.startsWith('http://') &&
         !finalUrl.startsWith('https://')) {
       finalUrl = 'https://$finalUrl';
     }
 
     try {
       await _controller!.loadRequest(Uri.parse(finalUrl));
-      _showSearchSuggestions = false;
-
-      // Vibrate on navigation
+      if (mounted) {
+        setState(() {
+          _showSearchSuggestions = false;
+          _showHomepage = false;
+        });
+      }
       HapticFeedback.lightImpact();
     } catch (e) {
-      // Check if widget is still mounted before showing snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -407,19 +455,15 @@ class _BrowserScreenState extends State<BrowserScreen>
     try {
       if (await canLaunchUrl(Uri.parse(url))) {
         await launchUrl(Uri.parse(url));
-      } else {
-        // Check if widget is still mounted before showing snackbar
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Cannot launch: $url'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cannot launch: $url'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
-      // Check if widget is still mounted before showing snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -463,10 +507,7 @@ class _BrowserScreenState extends State<BrowserScreen>
                 ),
               );
             },
-            child: const Text(
-              'Download',
-              style: TextStyle(color: Colors.blue),
-            ),
+            child: const Text('Download', style: TextStyle(color: Colors.blue)),
           ),
         ],
       ),
@@ -474,180 +515,326 @@ class _BrowserScreenState extends State<BrowserScreen>
   }
 
   Widget _buildHomepage() {
+    final categories = _quickApps
+        .map((app) => app['category'] as String)
+        .toSet()
+        .toList()
+      ..sort();
+
     return Container(
       color: _darkMode ? Colors.black : Colors.grey[100],
-      child: Column(
-        children: [
-          // Welcome header
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: _darkMode
-                    ? [Colors.blue[900]!, Colors.purple[900]!]
-                    : [Colors.blue[100]!, Colors.purple[100]!],
-              ),
-            ),
-            child: Column(
-              children: [
-                Icon(
-                  Icons.public,
-                  size: 60,
-                  color: _darkMode ? Colors.white : Colors.blue[900],
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            // Welcome header with gradient
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: _darkMode
+                      ? [Colors.deepPurple[900]!, Colors.blue[900]!]
+                      : [Colors.deepPurple[100]!, Colors.blue[100]!],
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  'SupaCave Browser',
-                  style: TextStyle(
-                    color: _darkMode ? Colors.white : Colors.blue[900],
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Roboto',
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.public,
+                      size: 50,
+                      color: _darkMode ? Colors.white : Colors.deepPurple[800],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Fast, Secure, and Private',
-                  style: TextStyle(
-                    color: _darkMode ? Colors.white70 : Colors.blue[700],
-                    fontSize: 14,
+                  const SizedBox(height: 16),
+                  Text(
+                    'SupaCave Browser',
+                    style: TextStyle(
+                      color: _darkMode ? Colors.white : Colors.deepPurple[800],
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Roboto',
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          
-          // Quick search bar
-Container(
-  padding: const EdgeInsets.all(20),
-  color: _darkMode ? Colors.grey[900] : Colors.white,
-  child: Row(
-    children: [
-      Expanded(
-        child: Container(
-          decoration: BoxDecoration(
-            color: _darkMode ? Colors.grey[800] : Colors.grey[200],
-            borderRadius: BorderRadius.circular(25),
-          ),
-          child: TextField(
-            controller: _urlController,
-            focusNode: _urlFocusNode,
-            style: TextStyle(
-              color: _darkMode ? Colors.white : Colors.black,
-              fontSize: 16, // Increased font size
-            ),
-            decoration: InputDecoration(
-              border: InputBorder.none,
-              hintText: 'Search or enter URL',
-              hintStyle: TextStyle(
-                color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 16, // Increased hint font size
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 20, 
-                vertical: 18, // Increased vertical padding
-              ),
-              prefixIcon: Icon(
-                Icons.search,
-                color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                  const SizedBox(height: 8),
+                  Text(
+                    'Fast • Secure • Private',
+                    style: TextStyle(
+                      color: _darkMode ? Colors.white70 : Colors.deepPurple[700],
+                      fontSize: 14,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
               ),
             ),
-            onSubmitted: _loadUrl,
-            onTap: () {
-              setState(() {
-                _showSearchSuggestions = true;
-              });
-            },
-          ),
-        ),
-      ),
-      const SizedBox(width: 10),
-      FloatingActionButton(
-        backgroundColor: Colors.blue,
-        onPressed: _showMainMenu,
-        child: const Icon(Icons.menu, color: Colors.white),
-      ),
-    ],
-  ),
-),
-          
-          // Quick apps grid
-          Expanded(
-            child: Container(
-              color: _darkMode ? Colors.black : Colors.grey[100],
-              child: Padding(
-                padding: const EdgeInsets.all(20),
+
+            // Search bar with menu
+            Container(
+              padding: const EdgeInsets.all(16),
+              color: _darkMode ? Colors.grey[900] : Colors.white,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: _darkMode ? Colors.grey[800] : Colors.grey[200],
+                        borderRadius: BorderRadius.circular(25),
+                      ),
+                      child: TextField(
+                        controller: _urlController,
+                        focusNode: _urlFocusNode,
+                        style: TextStyle(
+                          color: _darkMode ? Colors.white : Colors.black,
+                          fontSize: 16,
+                        ),
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          hintText: 'Search or enter URL',
+                          hintStyle: TextStyle(
+                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                            fontSize: 16,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 18,
+                          ),
+                          prefixIcon: Icon(
+                            Icons.search,
+                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                          ),
+                        ),
+                        onSubmitted: _loadUrl,
+                        onTap: () {
+                          setState(() => _showSearchSuggestions = true);
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  FloatingActionButton(
+                    mini: true,
+                    backgroundColor: Colors.blue,
+                    onPressed: _showMainMenu,
+                    child: const Icon(Icons.menu, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+
+            // Search suggestions
+            if (_showSearchSuggestions) _buildSearchSuggestions(),
+
+            // Quick Apps Section - SCROLLABLE
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '🚀 Quick Apps',
+                        style: TextStyle(
+                          color: _darkMode ? Colors.white : Colors.black,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.view_list,
+                          color: _darkMode ? Colors.white70 : Colors.grey[700],
+                        ),
+                        onPressed: () {
+                          // Toggle view mode
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap any app to launch instantly',
+                    style: TextStyle(
+                      color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Category tabs
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildCategoryChip('All', true),
+                        ...categories.map((category) =>
+                            _buildCategoryChip(category, false)),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Apps grid - SCROLLABLE
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 4,
+                      crossAxisSpacing: 15,
+                      mainAxisSpacing: 15,
+                      childAspectRatio: 0.9,
+                    ),
+                    itemCount: _quickApps.length,
+                    itemBuilder: (context, index) {
+                      final app = _quickApps[index];
+                      return GestureDetector(
+                        onTap: () => _loadUrl(app['url']),
+                        onLongPress: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('${app['name']}: ${app['description']}'),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: _darkMode ? Colors.grey[900] : Colors.white,
+                            borderRadius: BorderRadius.circular(15),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 50,
+                                height: 50,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      (app['color'] as Color).withValues(),
+                                      app['color'] as Color,
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  app['icon'] as IconData,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                app['name'] as String,
+                                style: TextStyle(
+                                  color: _darkMode ? Colors.white : Colors.black,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                app['category'] as String,
+                                style: TextStyle(
+                                  color: _darkMode ? Colors.grey[500] : Colors.grey[500],
+                                  fontSize: 9,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            // Recent history
+            if (_history.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(16),
+                color: _darkMode ? Colors.grey[900] : Colors.white,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Quick Apps',
-                      style: TextStyle(
-                        color: _darkMode ? Colors.white : Colors.black,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: GridView.builder(
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 4,
-                          crossAxisSpacing: 15,
-                          mainAxisSpacing: 15,
-                          childAspectRatio: 0.8,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '📜 Recent History',
+                          style: TextStyle(
+                            color: _darkMode ? Colors.white : Colors.black,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                        itemCount: _quickApps.length,
+                        IconButton(
+                          icon: Icon(
+                            Icons.clear_all,
+                            color: _darkMode ? Colors.white70 : Colors.grey[700],
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            setState(() => _history.clear());
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 80,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _history.take(5).length,
                         itemBuilder: (context, index) {
-                          final app = _quickApps[index];
+                          final url = _history.reversed.toList()[index];
                           return GestureDetector(
-                            onTap: () => _loadUrl(app['url']),
-                            onLongPress: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('${app['name']}: ${app['description']}'),
-                                ),
-                              );
-                            },
+                            onTap: () => _loadUrl(url),
                             child: Container(
+                              width: 200,
+                              margin: const EdgeInsets.only(right: 10),
+                              padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: _darkMode ? Colors.grey[900] : Colors.white,
-                                borderRadius: BorderRadius.circular(15),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
+                                color: _darkMode ? Colors.grey[800] : Colors.grey[200],
+                                borderRadius: BorderRadius.circular(10),
                               ),
                               child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: app['color'] as Color,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Icon(
-                                      app['icon'] as IconData,
-                                      color: Colors.white,
-                                      size: 24,
-                                    ),
+                                  Icon(
+                                    Icons.history,
+                                    color: _darkMode ? Colors.white70 : Colors.grey[700],
+                                    size: 16,
                                   ),
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: 4),
                                   Text(
-                                    app['name'] as String,
+                                    url.length > 30 ? '${url.substring(0, 30)}...' : url,
                                     style: TextStyle(
-                                      color: _darkMode ? Colors.white : Colors.black,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
+                                      color: _darkMode ? Colors.white70 : Colors.grey[700],
+                                      fontSize: 10,
                                     ),
-                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ],
                               ),
@@ -659,239 +846,42 @@ Container(
                   ],
                 ),
               ),
-            ),
-          ),
-          
-          // Recent history
-          if (_history.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(20),
-              color: _darkMode ? Colors.grey[900] : Colors.white,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Recent History',
-                        style: TextStyle(
-                          color: _darkMode ? Colors.white : Colors.black,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.clear_all,
-                          color: _darkMode ? Colors.white : Colors.black,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _history.clear();
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  SizedBox(
-                    height: 80,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _history.take(5).length,
-                      itemBuilder: (context, index) {
-                        final url = _history.reversed.toList()[index];
-                        return GestureDetector(
-                          onTap: () => _loadUrl(url),
-                          child: Container(
-                            width: 200,
-                            margin: const EdgeInsets.only(right: 10),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: _darkMode ? Colors.grey[800] : Colors.grey[200],
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.history,
-                                  color: _darkMode ? Colors.white : Colors.black,
-                                  size: 16,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  url.length > 30 ? '${url.substring(0, 30)}...' : url,
-                                  style: TextStyle(
-                                    color: _darkMode ? Colors.white : Colors.black,
-                                    fontSize: 10,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
+
+            const SizedBox(height: 10),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildUrlBar() {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: _darkMode ? Colors.grey[900]! : Colors.grey[200]!,
-      border: Border(bottom: BorderSide(color: _darkMode ? Colors.grey[800]! : Colors.grey[300]!)),
-    ),
-    child: Row(
-      children: [
-        // Back button
-        StreamBuilder<bool>(
-          stream: _controller?.canGoBack().asStream(),
-          builder: (context, snapshot) {
-            final canGoBack = snapshot.data ?? false;
-            return IconButton(
-              icon: Icon(
-                Icons.arrow_back,
-                color: canGoBack 
-                    ? (_darkMode ? Colors.white : Colors.black)
-                    : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
-              ),
-              onPressed: canGoBack ? () async {
-                await _controller?.goBack();
-                HapticFeedback.lightImpact();
-              } : null,
-              style: IconButton.styleFrom(
-                backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.all(8),
-              ),
-            );
-          },
-        ),
-        
-        // Forward button
-        StreamBuilder<bool>(
-          stream: _controller?.canGoForward().asStream(),
-          builder: (context, snapshot) {
-            final canGoForward = snapshot.data ?? false;
-            return IconButton(
-              icon: Icon(
-                Icons.arrow_forward,
-                color: canGoForward 
-                    ? (_darkMode ? Colors.white : Colors.black)
-                    : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
-                ),
-              onPressed: canGoForward ? () async {
-                await _controller?.goForward();
-                HapticFeedback.lightImpact();
-              } : null,
-              style: IconButton.styleFrom(
-                backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.all(8),
-              ),
-            );
-          },
-        ),
-        
-        // URL bar - EXPANDED
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: _darkMode ? Colors.black : Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                // Security icon (only shown for HTTPS)
-                if (_currentUrl.startsWith('https://'))
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: Icon(
-                      Icons.lock,
-                      size: 16,
-                      color: Colors.green,
-                    ),
-                  ),
-                
-                // URL text field - TAKES MOST SPACE
-                Expanded(
-                  child: TextField(
-                    controller: _urlController,
-                    focusNode: _urlFocusNode,
-                    style: TextStyle(
-                      color: _darkMode ? Colors.white : Colors.black,
-                      fontSize: 16, // Increased font size
-                    ),
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      hintText: 'Search or enter URL',
-                      hintStyle: TextStyle(
-                        color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                        fontSize: 16, // Increased hint font size
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, 
-                        vertical: 16, // Increased vertical padding
-                      ),
-                      isDense: false,
-                    ),
-                    maxLines: 1,
-                    textInputAction: TextInputAction.go,
-                    onSubmitted: _loadUrl,
-                    onTap: () {
-                      setState(() {
-                        _showSearchSuggestions = true;
-                      });
-                    },
-                  ),
-                ),
-                
-                // Menu button (moved inside URL bar)
-                IconButton(
-                  icon: Icon(
-                    Icons.more_vert,
-                    size: 20,
-                    color: _darkMode ? Colors.white : Colors.black,
-                  ),
-                  onPressed: _showMainMenu,
-                ),
-              ],
-            ),
+  Widget _buildCategoryChip(String label, bool isSelected) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        label: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : (_darkMode ? Colors.white70 : Colors.grey[700]),
+            fontSize: 12,
           ),
         ),
-      ],
-    ),
-  );
-}
+        selected: isSelected,
+        onSelected: (_) {
+          // Filter apps by category
+        },
+        backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[200],
+        selectedColor: Colors.blue,
+        checkmarkColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
+    );
+  }
 
   Widget _buildSearchSuggestions() {
-    if (!_showSearchSuggestions) return const SizedBox.shrink();
-    
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: _darkMode ? Colors.grey[800]! : Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -910,7 +900,11 @@ Container(
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: _darkMode ? Colors.grey[700]! : Colors.grey[200]!)),
+              border: Border(
+                bottom: BorderSide(
+                  color: _darkMode ? Colors.grey[700]! : Colors.grey[200]!,
+                ),
+              ),
             ),
             child: Row(
               children: [
@@ -926,11 +920,12 @@ Container(
                   ),
                 ),
                 PopupMenuButton<String>(
-                  icon: Icon(Icons.arrow_drop_down, color: _darkMode ? Colors.white : Colors.black),
+                  icon: Icon(
+                    Icons.arrow_drop_down,
+                    color: _darkMode ? Colors.white : Colors.black,
+                  ),
                   onSelected: (value) {
-                    setState(() {
-                      _defaultSearchEngine = value;
-                    });
+                    setState(() => _defaultSearchEngine = value);
                   },
                   itemBuilder: (context) {
                     return _searchEngines.entries.map((entry) {
@@ -938,8 +933,11 @@ Container(
                         value: entry.key,
                         child: Row(
                           children: [
-                            Icon(entry.value['icon'] as IconData, 
-                                color: entry.value['color'] as Color, size: 20),
+                            Icon(
+                              entry.value['icon'] as IconData,
+                              color: entry.value['color'] as Color,
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Text(entry.value['name'] as String),
                           ],
@@ -951,7 +949,7 @@ Container(
               ],
             ),
           ),
-          
+
           // Quick suggestions
           ..._quickApps.take(8).map((app) {
             return ListTile(
@@ -989,9 +987,7 @@ Container(
               ),
               onTap: () {
                 _loadUrl(app['url'] as String);
-                setState(() {
-                  _showSearchSuggestions = false;
-                });
+                setState(() => _showSearchSuggestions = false);
               },
             );
           }),
@@ -1000,24 +996,189 @@ Container(
     );
   }
 
+  Widget _buildUrlBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: _darkMode ? Colors.grey[900]! : Colors.grey[200]!,
+        border: Border(
+          bottom: BorderSide(
+            color: _darkMode ? Colors.grey[800]! : Colors.grey[300]!,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Back button
+          StreamBuilder<bool>(
+            stream: _controller?.canGoBack().asStream(),
+            builder: (context, snapshot) {
+              final canGoBack = snapshot.data ?? false;
+              return IconButton(
+                icon: Icon(
+                  Icons.arrow_back_ios_new,
+                  size: 16,
+                  color: canGoBack
+                      ? (_darkMode ? Colors.white : Colors.black)
+                      : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
+                ),
+                onPressed: canGoBack
+                    ? () async {
+                        await _controller?.goBack();
+                        HapticFeedback.lightImpact();
+                      }
+                    : null,
+                style: IconButton.styleFrom(
+                  backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  minimumSize: const Size(32, 32),
+                ),
+              );
+            },
+          ),
+
+          // Forward button
+          StreamBuilder<bool>(
+            stream: _controller?.canGoForward().asStream(),
+            builder: (context, snapshot) {
+              final canGoForward = snapshot.data ?? false;
+              return IconButton(
+                icon: Icon(
+                  Icons.arrow_forward_ios,
+                  size: 16,
+                  color: canGoForward
+                      ? (_darkMode ? Colors.white : Colors.black)
+                      : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
+                ),
+                onPressed: canGoForward
+                    ? () async {
+                        await _controller?.goForward();
+                        HapticFeedback.lightImpact();
+                      }
+                    : null,
+                style: IconButton.styleFrom(
+                  backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  minimumSize: const Size(32, 32),
+                ),
+              );
+            },
+          ),
+
+          // URL bar
+          Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(
+                color: _darkMode ? Colors.black : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  if (_currentUrl.startsWith('https://'))
+                    const Padding(
+                      padding: EdgeInsets.only(left: 12),
+                      child: Icon(Icons.lock, size: 14, color: Colors.green),
+                    ),
+                  Expanded(
+                    child: TextField(
+                      controller: _urlController,
+                      focusNode: _urlFocusNode,
+                      style: TextStyle(
+                        color: _darkMode ? Colors.white : Colors.black,
+                        fontSize: 14,
+                      ),
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        hintText: 'Search or enter URL',
+                        hintStyle: TextStyle(
+                          color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                          fontSize: 14,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        isDense: true,
+                      ),
+                      maxLines: 1,
+                      textInputAction: TextInputAction.go,
+                      onSubmitted: _loadUrl,
+                      onTap: () {
+                        setState(() => _showSearchSuggestions = true);
+                      },
+                    ),
+                  ),
+                  // Menu button
+                  IconButton(
+                    icon: Icon(
+                      Icons.more_vert,
+                      size: 18,
+                      color: _darkMode ? Colors.white : Colors.black,
+                    ),
+                    onPressed: _showMainMenu,
+                    padding: const EdgeInsets.all(4),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Refresh/Stop button
+          IconButton(
+            icon: Icon(
+              _isLoading ? Icons.close : Icons.refresh,
+              size: 18,
+              color: _darkMode ? Colors.white : Colors.black,
+            ),
+            onPressed: _isLoading
+                ? () => _controller?.reload()
+                : () => _controller?.reload(),
+            style: IconButton.styleFrom(
+              backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              padding: const EdgeInsets.all(6),
+              minimumSize: const Size(32, 32),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBannerAd() {
     if (!_showAds || !_isBannerAdLoaded || _bannerAd == null) {
       return Container(
-        height: 60,
+        height: 50,
         color: _darkMode ? Colors.black : Colors.grey[100],
         child: Center(
           child: Text(
-            'SupaCave Browser',
+            'ArinaCave Browser',
             style: TextStyle(
               color: _darkMode ? Colors.white54 : Colors.grey[600],
-              fontSize: 14,
+              fontSize: 12,
               fontWeight: FontWeight.bold,
             ),
           ),
         ),
       );
     }
-    
+
     return Container(
       height: _bannerAd!.size.height.toDouble(),
       color: Colors.transparent,
@@ -1040,18 +1201,33 @@ Container(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Handle
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: _darkMode ? Colors.grey[700] : Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+
                 // Header
                 Container(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    border: Border(bottom: BorderSide(color: _darkMode ? Colors.grey[800]! : Colors.grey[200]!)),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: _darkMode ? Colors.grey[800]! : Colors.grey[200]!,
+                      ),
+                    ),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         Icons.public,
                         color: _darkMode ? Colors.white : Colors.black,
-                        size: 30,
+                        size: 28,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -1059,7 +1235,7 @@ Container(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'SupaCave Browser',
+                              'ArinaCave Browser',
                               style: TextStyle(
                                 color: _darkMode ? Colors.white : Colors.black,
                                 fontSize: 18,
@@ -1067,7 +1243,7 @@ Container(
                               ),
                             ),
                             Text(
-                              _currentTitle,
+                              _currentTitle.isNotEmpty ? _currentTitle : 'Ready to browse',
                               style: TextStyle(
                                 color: _darkMode ? Colors.grey[400] : Colors.grey[600],
                                 fontSize: 12,
@@ -1081,18 +1257,21 @@ Container(
                     ],
                   ),
                 ),
-                
-                // Quick actions
+
+                // Quick actions grid
                 Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   child: GridView.count(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisCount: 4,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
                     children: [
                       _buildMenuButton(
                         icon: Icons.bookmark,
                         label: 'Bookmarks',
+                        color: Colors.orange,
                         onTap: () {
                           Navigator.pop(context);
                           _showBookmarks();
@@ -1101,6 +1280,7 @@ Container(
                       _buildMenuButton(
                         icon: Icons.history,
                         label: 'History',
+                        color: Colors.blue,
                         onTap: () {
                           Navigator.pop(context);
                           _showHistory();
@@ -1109,6 +1289,7 @@ Container(
                       _buildMenuButton(
                         icon: Icons.download,
                         label: 'Downloads',
+                        color: Colors.green,
                         onTap: () {
                           Navigator.pop(context);
                           _showDownloads();
@@ -1117,22 +1298,16 @@ Container(
                       _buildMenuButton(
                         icon: Icons.share,
                         label: 'Share',
+                        color: Colors.purple,
                         onTap: () {
                           Navigator.pop(context);
                           _sharePage();
                         },
                       ),
                       _buildMenuButton(
-                        icon: Icons.print,
-                        label: 'Print',
-                        onTap: () {
-                          Navigator.pop(context);
-                          _printPage();
-                        },
-                      ),
-                      _buildMenuButton(
                         icon: Icons.qr_code_scanner,
                         label: 'QR Scan',
+                        color: Colors.teal,
                         onTap: () {
                           Navigator.pop(context);
                           _scanQRCode();
@@ -1141,6 +1316,7 @@ Container(
                       _buildMenuButton(
                         icon: Icons.translate,
                         label: 'Translate',
+                        color: Colors.indigo,
                         onTap: () {
                           Navigator.pop(context);
                           _translatePage();
@@ -1149,48 +1325,44 @@ Container(
                       _buildMenuButton(
                         icon: Icons.nightlight,
                         label: 'Dark Mode',
+                        color: Colors.deepPurple,
                         onTap: () {
-                          setState(() {
-                            _darkMode = !_darkMode;
-                          });
+                          setState(() => _darkMode = !_darkMode);
                           Navigator.pop(context);
                         },
                       ),
-                    ],
-                  ),
-                ),
-                
-                // Settings
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(
-                          Icons.settings,
-                          color: _darkMode ? Colors.white : Colors.black,
-                        ),
-                        title: Text(
-                          'Settings',
-                          style: TextStyle(
-                            color: _darkMode ? Colors.white : Colors.black,
-                          ),
-                        ),
-                        trailing: Icon(
-                          Icons.chevron_right,
-                          color: _darkMode ? Colors.white : Colors.black,
-                        ),
+                      _buildMenuButton(
+                        icon: Icons.settings,
+                        label: 'Settings',
+                        color: Colors.grey,
                         onTap: () {
                           Navigator.pop(context);
                           _showSettings();
                         },
                       ),
-                      
+                    ],
+                  ),
+                ),
+
+                // Settings toggles
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    children: [
                       SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
                         title: Text(
                           'Desktop Mode',
                           style: TextStyle(
                             color: _darkMode ? Colors.white : Colors.black,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'View websites in desktop version',
+                          style: TextStyle(
+                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                            fontSize: 12,
                           ),
                         ),
                         value: _desktopMode,
@@ -1200,23 +1372,24 @@ Container(
                             _controller?.setUserAgent(value
                                 ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                                 : _userAgent);
-                            if (value) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Desktop mode enabled'),
-                                ),
-                              );
-                            }
                           });
                         },
                         activeColor: Colors.blue,
                       ),
-                      
                       SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
                         title: Text(
                           'Show Ads',
                           style: TextStyle(
                             color: _darkMode ? Colors.white : Colors.black,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Display ads for free browsing',
+                          style: TextStyle(
+                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                            fontSize: 12,
                           ),
                         ),
                         value: _showAds,
@@ -1233,16 +1406,17 @@ Container(
                         },
                         activeColor: Colors.blue,
                       ),
-                      
                       ListTile(
+                        contentPadding: EdgeInsets.zero,
                         leading: Icon(
                           Icons.info,
                           color: _darkMode ? Colors.white : Colors.black,
                         ),
                         title: Text(
-                          'About SupaCave Browser',
+                          'About ArinaCave Browser',
                           style: TextStyle(
                             color: _darkMode ? Colors.white : Colors.black,
+                            fontSize: 14,
                           ),
                         ),
                         trailing: Icon(
@@ -1257,26 +1431,26 @@ Container(
                     ],
                   ),
                 ),
-                
-                const SizedBox(height: 30),
-                
+
+                const SizedBox(height: 20),
+
                 // Close button
                 Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[200],
-                      minimumSize: const Size(double.infinity, 50),
+                      minimumSize: const Size(double.infinity, 45),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(25),
                       ),
                     ),
                     child: Text(
-                      'Close',
+                  'Close',
                       style: TextStyle(
                         color: _darkMode ? Colors.white : Colors.black,
-                        fontSize: 16,
+                        fontSize: 14,
                       ),
                     ),
                   ),
@@ -1292,31 +1466,36 @@ Container(
   Widget _buildMenuButton({
     required IconData icon,
     required String label,
+    required Color color,
     required VoidCallback onTap,
   }) {
     return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(8),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 48,
-              height: 48,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
-                color: _darkMode ? Colors.grey[800] : Colors.grey[200],
+                color: color.withValues(),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, color: _darkMode ? Colors.white : Colors.black, size: 24),
+              child: Icon(icon, color: color, size: 22),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
-                color: _darkMode ? Colors.white : Colors.black,
-                fontSize: 12,
+                color: _darkMode ? Colors.white70 : Colors.grey[700],
+                fontSize: 10,
               ),
               textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -1325,7 +1504,6 @@ Container(
   }
 
   void _showBookmarks() {
-    // Implement bookmarks functionality
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Bookmarks feature coming soon!'),
@@ -1350,7 +1528,9 @@ Container(
               ? Center(
                   child: Text(
                     'No history yet',
-                    style: TextStyle(color: _darkMode ? Colors.grey[400] : Colors.grey[600]),
+                    style: TextStyle(
+                      color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                    ),
                   ),
                 )
               : ListView.builder(
@@ -1389,9 +1569,7 @@ Container(
           if (_history.isNotEmpty)
             TextButton(
               onPressed: () {
-                setState(() {
-                  _history.clear();
-                });
+                setState(() => _history.clear());
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -1400,10 +1578,7 @@ Container(
                   ),
                 );
               },
-              child: const Text(
-                'Clear All',
-                style: TextStyle(color: Colors.red),
-              ),
+              child: const Text('Clear All', style: TextStyle(color: Colors.red)),
             ),
         ],
       ),
@@ -1421,7 +1596,6 @@ Container(
 
   void _sharePage() {
     if (_currentUrl.isNotEmpty) {
-      // Implement share functionality
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Share: $_currentUrl'),
@@ -1429,6 +1603,12 @@ Container(
             label: 'Copy',
             onPressed: () {
               Clipboard.setData(ClipboardData(text: _currentUrl));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('URL copied!'),
+                  backgroundColor: Colors.green,
+                ),
+              );
             },
           ),
         ),
@@ -1443,15 +1623,6 @@ Container(
     }
   }
 
-  void _printPage() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Print feature coming soon!'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
   void _scanQRCode() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -1463,7 +1634,8 @@ Container(
 
   void _translatePage() {
     if (_currentUrl.isNotEmpty) {
-      final translateUrl = 'https://translate.google.com/translate?hl=en&sl=auto&tl=en&u=${Uri.encodeComponent(_currentUrl)}';
+      final translateUrl =
+          'https://translate.google.com/translate?hl=en&sl=auto&tl=en&u=${Uri.encodeComponent(_currentUrl)}';
       _loadUrl(translateUrl);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1501,7 +1673,7 @@ Container(
                     ),
                   ),
                   const SizedBox(height: 20),
-                  
+
                   // Search Engine
                   Text(
                     'Default Search Engine',
@@ -1520,31 +1692,39 @@ Container(
                         value: entry.key,
                         child: Row(
                           children: [
-                            Icon(entry.value['icon'] as IconData, 
-                                color: entry.value['color'] as Color),
+                            Icon(
+                              entry.value['icon'] as IconData,
+                              color: entry.value['color'] as Color,
+                            ),
                             const SizedBox(width: 8),
-                            Text(entry.value['name'] as String,
-                                style: TextStyle(color: _darkMode ? Colors.white : Colors.black)),
+                            Text(
+                              entry.value['name'] as String,
+                              style: TextStyle(
+                                color: _darkMode ? Colors.white : Colors.black,
+                              ),
+                            ),
                           ],
                         ),
                       );
                     }).toList(),
                     onChanged: (value) {
-                      setState(() {
-                        _defaultSearchEngine = value!;
-                      });
+                      setState(() => _defaultSearchEngine = value!);
                     },
                     dropdownColor: _darkMode ? Colors.grey[800] : Colors.white,
-                    style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                    style: TextStyle(
+                      color: _darkMode ? Colors.white : Colors.black,
+                    ),
                   ),
-                  
+
                   const SizedBox(height: 20),
-                  
+
                   // Settings toggles
                   SwitchListTile(
                     title: Text(
                       'JavaScript',
-                      style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                      style: TextStyle(
+                        color: _darkMode ? Colors.white : Colors.black,
+                      ),
                     ),
                     value: _javascriptEnabled,
                     onChanged: (value) {
@@ -1557,11 +1737,13 @@ Container(
                     },
                     activeColor: Colors.blue,
                   ),
-                  
+
                   SwitchListTile(
                     title: Text(
                       'Enable Ad Block',
-                      style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                      style: TextStyle(
+                        color: _darkMode ? Colors.white : Colors.black,
+                      ),
                     ),
                     value: _enableAdBlock,
                     onChanged: (value) {
@@ -1579,7 +1761,7 @@ Container(
                     },
                     activeColor: Colors.blue,
                   ),
-                  
+
                   // Ad frequency
                   const SizedBox(height: 20),
                   Text(
@@ -1597,17 +1779,16 @@ Container(
                     divisions: 7,
                     label: 'Every $_adFrequency navigations',
                     onChanged: (value) {
-                      setState(() {
-                        _adFrequency = value.toInt();
-                      });
+                      setState(() => _adFrequency = value.toInt());
                     },
                     activeColor: Colors.blue,
                     inactiveColor: _darkMode ? Colors.grey[700] : Colors.grey[300],
                   ),
-                  
+
                   // Clear data
                   const SizedBox(height: 20),
                   ListTile(
+                    contentPadding: EdgeInsets.zero,
                     leading: Icon(
                       Icons.delete_sweep,
                       color: _darkMode ? Colors.white : Colors.black,
@@ -1625,25 +1806,29 @@ Container(
                           backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
                           title: Text(
                             'Clear Browser Data',
-                            style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                            style: TextStyle(
+                              color: _darkMode ? Colors.white : Colors.black,
+                            ),
                           ),
                           content: Text(
                             'This will clear history, cookies, and cache. Continue?',
-                            style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                            style: TextStyle(
+                              color: _darkMode ? Colors.white : Colors.black,
+                            ),
                           ),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context),
                               child: Text(
                                 'Cancel',
-                                style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                                style: TextStyle(
+                                  color: _darkMode ? Colors.white : Colors.black,
+                                ),
                               ),
                             ),
                             TextButton(
                               onPressed: () {
-                                setState(() {
-                                  _history.clear();
-                                });
+                                setState(() => _history.clear());
                                 _controller?.clearCache();
                                 Navigator.pop(context);
                                 Navigator.pop(context);
@@ -1664,9 +1849,9 @@ Container(
                       );
                     },
                   ),
-                  
+
                   const SizedBox(height: 30),
-                  
+
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -1694,7 +1879,7 @@ Container(
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 20),
                 ],
               ),
@@ -1712,14 +1897,10 @@ Container(
         backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
         title: Row(
           children: [
-            Icon(
-              Icons.public,
-              color: Colors.blue,
-              size: 30,
-            ),
+            Icon(Icons.public, color: Colors.blue, size: 30),
             const SizedBox(width: 12),
             Text(
-              'SupaCave Browser',
+              'ArinaCave Browser',
               style: TextStyle(
                 color: _darkMode ? Colors.white : Colors.black,
                 fontSize: 20,
@@ -1766,8 +1947,7 @@ Container(
                           fontSize: 12,
                         ),
                       ),
-                    ))
-                ,
+                    )),
           ],
         ),
         actions: [
@@ -1783,10 +1963,7 @@ Container(
               Navigator.pop(context);
               _loadUrl('https://github.com');
             },
-            child: const Text(
-              'Website',
-              style: TextStyle(color: Colors.blue),
-            ),
+            child: const Text('Website', style: TextStyle(color: Colors.blue)),
           ),
         ],
       ),
@@ -1796,7 +1973,7 @@ Container(
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    
+
     return Scaffold(
       backgroundColor: _darkMode ? Colors.black : Colors.grey[100],
       body: SafeArea(
@@ -1804,10 +1981,7 @@ Container(
           children: [
             // URL Bar
             _buildUrlBar(),
-            
-            // Search suggestions
-            _buildSearchSuggestions(),
-            
+
             // Progress indicator
             if (_isLoading)
               LinearProgressIndicator(
@@ -1816,89 +1990,33 @@ Container(
                 color: Colors.blue,
                 minHeight: 2,
               ),
-            
+
             // WebView or Homepage
             Expanded(
               child: Stack(
                 children: [
-                  // Homepage
-                  if (_showHomepage)
-                    _buildHomepage(),
-                  
                   // WebView
-                  if (!_showHomepage && _controller != null)
-                    WebViewWidget(controller: _controller!),
-                  
-                  // Empty state
+                  if (_controller != null) ...[
+                    if (_showHomepage)
+                      _buildHomepage()
+                    else
+                      WebViewWidget(controller: _controller!),
+                  ],
+
+                  // Loading state
                   if (!_showHomepage && _controller == null)
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.public,
-                            size: 80,
-                            color: _darkMode ? Colors.grey[700] : Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'SupaCave Browser',
-                            style: TextStyle(
-                              color: _darkMode ? Colors.white : Colors.black,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Loading browser...',
-                            style: TextStyle(
-                              color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          CircularProgressIndicator(
-                            color: Colors.blue,
-                          ),
-                        ],
-                      ),
-                    ),
+                    const Center(child: CircularProgressIndicator()),
                 ],
               ),
             ),
-            
+
             // Bottom banner ad
             _buildBannerAd(),
           ],
         ),
       ),
-      
-      // Floating Action Button - Now serves as ENTER/SUBMIT button
-floatingActionButton: SizedBox(
-        width: 24, // Adjust width
-        height: 24, // Adjust height
-        child: FloatingActionButton(
-          backgroundColor: Colors.blue,
-          elevation: 2,
-          onPressed: () {
-            if (_urlController.text.isNotEmpty) {
-              _loadUrl(_urlController.text);
-            } else {
-              setState(() {
-                _showHomepage = true;
-              });
-            }
-            HapticFeedback.lightImpact();
-          },
-          child:
-              _urlController.text.isEmpty
-                  ? const Icon(Icons.home, color: Colors.white, size: 18)
-                  : const Icon(Icons.search, color: Colors.white, size: 18),
-        ),
-      ),
     );
   }
-
 
   @override
   void dispose() {

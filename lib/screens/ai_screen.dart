@@ -6,8 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-import 'package:arina_cave/services/ad_service.dart';
-import 'package:arina_cave/widgets/ad_banner.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
@@ -15,7 +15,6 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'hive_models.dart';
-
 
 class AIScreen extends StatefulWidget {
   const AIScreen({super.key});
@@ -31,6 +30,13 @@ class _AIScreenState extends State<AIScreen>
   bool _showPlatformSelection = true;
   bool _usingGeminiAPI = false;
   FocusNode? _inputFocusNode;
+
+  // Ad variables
+  late BannerAd _bannerAd;
+  InterstitialAd? _interstitialAd;
+  bool _isBannerAdLoaded = false;
+  bool _isInterstitialAdLoaded = false;
+  Timer? _interstitialTimer;
 
   // Hive boxes
   late Box<ChatMessageHive> _chatBox;
@@ -189,6 +195,11 @@ class _AIScreenState extends State<AIScreen>
     _initializeApiKey();
     _initializeWebView();
     _initializeFocusNode();
+    // Initialize ads
+    MobileAds.instance.initialize();
+    _loadBannerAd();
+    _loadInterstitialAd();
+    _startInterstitialTimer();
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
     _messageController.addListener(_onMessageTextChanged);
@@ -267,6 +278,11 @@ class _AIScreenState extends State<AIScreen>
     _interestsController.dispose();
     _inputFocusNode?.dispose();
     _scrollController.dispose();
+    _bannerAd.dispose();
+    _interstitialTimer?.cancel();
+    if (_interstitialAd != null) {
+      _interstitialAd!.dispose();
+    }
     await _saveConversation();
   }
 
@@ -333,6 +349,99 @@ class _AIScreenState extends State<AIScreen>
         print('✅ Gemini API Key loaded successfully');
       }
     }
+  }
+
+  // Banner Ad Methods
+  void _loadBannerAd() {
+    _bannerAd = BannerAd(
+      size: AdSize.banner,
+      adUnitId: 'ca-app-pub-1472609237394607/7118264698',
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          setState(() {
+            _isBannerAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          setState(() {
+            _isBannerAdLoaded = false;
+          });
+        },
+      ),
+      request: const AdRequest(),
+    );
+    _bannerAd.load();
+  }
+
+  // Interstitial Ad Methods
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: 'ca-app-pub-1472609237394607/5863485201',
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          _interstitialAd = ad;
+          _isInterstitialAdLoaded = true;
+          _setupInterstitialAdListeners();
+        },
+        onAdFailedToLoad: (error) {
+          _interstitialAd = null;
+          _isInterstitialAdLoaded = false;
+        },
+      ),
+    );
+  }
+
+  void _setupInterstitialAdListeners() {
+    _interstitialAd?.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (ad) {
+        ad.dispose();
+        _interstitialAd = null;
+        _isInterstitialAdLoaded = false;
+        _loadInterstitialAd();
+      },
+      onAdFailedToShowFullScreenContent: (ad, error) {
+        ad.dispose();
+        _interstitialAd = null;
+        _isInterstitialAdLoaded = false;
+        _loadInterstitialAd();
+      },
+    );
+  }
+
+  void _startInterstitialTimer() {
+    _interstitialTimer?.cancel();
+    _interstitialTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      if (_isInterstitialAdLoaded && _interstitialAd != null) {
+        _showInterstitialAd();
+      }
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isInterstitialAdLoaded && _interstitialAd != null) {
+        _showInterstitialAd();
+      }
+    });
+  }
+
+  void _showInterstitialAd() {
+    if (_interstitialAd != null && _isInterstitialAdLoaded) {
+      _interstitialAd!.show();
+      _interstitialTimer?.cancel();
+      _startInterstitialTimer();
+    }
+  }
+
+  Widget _buildBannerAd() {
+    if (!_isBannerAdLoaded) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      height: 50,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: AdWidget(ad: _bannerAd),
+    );
   }
 
   Future<void> _pickImage() async {
@@ -455,11 +564,12 @@ class _AIScreenState extends State<AIScreen>
           // Restore continue state from loaded history
           final lastAiMsg = _messages.lastWhere(
             (m) => !m.isUser && m.isIncomplete && !m.isError,
-            orElse: () => ChatMessage(
-              text: '',
-              isUser: false,
-              timestamp: DateTime.now(),
-            ),
+            orElse:
+                () => ChatMessage(
+                  text: '',
+                  isUser: false,
+                  timestamp: DateTime.now(),
+                ),
           );
           if (lastAiMsg.text.isNotEmpty) {
             _lastIncompleteResponse = lastAiMsg.text;
@@ -729,6 +839,11 @@ Current Year: $currentYear''';
           'threshold': 'BLOCK_ONLY_HIGH',
         },
       ],
+    'tools': [
+        {
+          'google_search': {}, // <-- This activates real-time search
+        },
+      ],
     };
 
     if (kDebugMode) {
@@ -861,7 +976,7 @@ Current Year: $currentYear''';
 
   // FIX: Continue now properly appends to existing response
   Future<void> _continueIncompleteResponse() async {
-        // Recover incomplete text from messages list if state was lost
+    // Recover incomplete text from messages list if state was lost
     if (_lastIncompleteResponse.isEmpty) {
       final lastIncomplete = _messages.lastWhere(
         (m) => !m.isUser && m.isIncomplete && !m.isError,
@@ -1283,12 +1398,6 @@ Current Year: $currentYear''';
           });
 
           await _saveConversation();
-
-          final aiResponses =
-              _messages.where((m) => !m.isUser && !m.isError).length;
-          if (aiResponses % 3 == 0) {
-            AdService.instance.showInterstitialAd();
-          }
 
           _scheduleAutoScroll();
         },
@@ -2999,7 +3108,7 @@ Current Year: $currentYear''';
                             },
                           ),
                 ),
-
+                _buildBannerAd(),
                 if (_selectedImages.isNotEmpty)
                   Container(
                     height: 80,
@@ -3188,7 +3297,6 @@ Current Year: $currentYear''';
                     ],
                   ),
                 ),
-                _buildBannerAd(),
               ],
             ),
 
@@ -3243,10 +3351,6 @@ Current Year: $currentYear''';
     );
   }
 
-  Widget _buildBannerAd() {
-    return const AdBanner();
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -3259,6 +3363,8 @@ Current Year: $currentYear''';
     }
   }
 }
+
+
 
 // UI Models
 class GeminiModel {
@@ -3462,7 +3568,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   }
 
   // COMPLETELY NEW CODE BLOCK EXTRACTION - NO DUPLICATION BUG
-    List<_CodeBlock> _extractCodeBlocks(String text) {
+  List<_CodeBlock> _extractCodeBlocks(String text) {
     final List<_CodeBlock> blocks = [];
     final regex = RegExp(r'```(\w*)\s*\n?([\s\S]*?)```', multiLine: true);
 
@@ -3470,7 +3576,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       final language = (match.group(1) ?? '').trim();
       final code = (match.group(2) ?? '').trim();
 
-            if (code.isNotEmpty) {
+      if (code.isNotEmpty) {
         // Check for duplicate code blocks
         final isDuplicate = blocks.any(
           (b) => b.code == code && b.language == language,
@@ -3835,101 +3941,99 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   Widget build(BuildContext context) {
     final message = widget.message;
 
-        return Container(
-        width: double.infinity,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Align(
-          alignment:
-              message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: double.infinity,
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.99,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (!message.isUser &&
-                    message.thinkingProcess != null &&
-                    message.thinkingProcess!.isNotEmpty)
-                  _buildThinkingSection(),
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Align(
+        alignment:
+            message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          width: double.infinity,
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.99,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!message.isUser &&
+                  message.thinkingProcess != null &&
+                  message.thinkingProcess!.isNotEmpty)
+                _buildThinkingSection(),
 
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: message.isUser ? Colors.blue.shade900 : Colors.black87,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
                     color:
-                        message.isUser ? Colors.blue.shade900 : Colors.black87,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color:
-                          message.isUser
-                              ? Colors.blueAccent
-                              : (message.isError
-                                  ? Colors.redAccent
-                                  : Colors.grey.shade700),
-                      width: 1,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (message.images != null && message.images!.isNotEmpty)
-                        Container(
-                          margin: EdgeInsets.only(
-                            bottom: message.text.isNotEmpty ? 8 : 0,
-                          ),
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children:
-                                message.images!.asMap().entries.map((entry) {
-                                  return _buildImagePreview(
-                                    entry.value,
-                                    entry.key,
-                                  );
-                                }).toList(),
-                          ),
-                        ),
-
-                      _buildMessageContent(message),
-
-                      if (message.isUser &&
-                          message.text.isEmpty &&
-                          message.images != null &&
-                          message.images!.isNotEmpty &&
-                          !message.isLoading)
-                        const Text(
-                          '[Image attached]',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-
-                      if (message.isError &&
-                          widget.onRetryPressed != null &&
-                          message.canRetry)
-                        _buildRetryButton(),
-
-                      if (message.isIncomplete &&
-                          !message.isUser &&
-                          !message.isError &&
-                          widget.onContinuePressed != null)
-                        _buildContinueButton(),
-
-                      // NEW: Action buttons
-                      if (!message.isError) _buildActionButtons(),
-                    ],
+                        message.isUser
+                            ? Colors.blueAccent
+                            : (message.isError
+                                ? Colors.redAccent
+                                : Colors.grey.shade700),
+                    width: 1,
                   ),
                 ),
-              ],
-            ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (message.images != null && message.images!.isNotEmpty)
+                      Container(
+                        margin: EdgeInsets.only(
+                          bottom: message.text.isNotEmpty ? 8 : 0,
+                        ),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children:
+                              message.images!.asMap().entries.map((entry) {
+                                return _buildImagePreview(
+                                  entry.value,
+                                  entry.key,
+                                );
+                              }).toList(),
+                        ),
+                      ),
+
+                    _buildMessageContent(message),
+
+                    if (message.isUser &&
+                        message.text.isEmpty &&
+                        message.images != null &&
+                        message.images!.isNotEmpty &&
+                        !message.isLoading)
+                      const Text(
+                        '[Image attached]',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+
+                    if (message.isError &&
+                        widget.onRetryPressed != null &&
+                        message.canRetry)
+                      _buildRetryButton(),
+
+                    if (message.isIncomplete &&
+                        !message.isUser &&
+                        !message.isError &&
+                        widget.onContinuePressed != null)
+                      _buildContinueButton(),
+
+                    // NEW: Action buttons
+                    if (!message.isError) _buildActionButtons(),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
-      );
-
+      ),
+    );
   }
 }
 
