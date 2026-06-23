@@ -6,8 +6,14 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Arinacave - All-in-one app">
   
-  <!-- IMPORTANT: Relaxed CSP for Firebase -->
-  <meta http-equiv="Content-Security-Policy" content="default-src * 'self' 'unsafe-inline' 'unsafe-eval' data: gap: content: https://*.googleapis.com https://*.firebaseio.com https://*.google.com">
+  <!-- ====== UPDATED CSP WITH blob: SUPPORT ====== -->
+  <meta http-equiv="Content-Security-Policy" 
+        content="default-src * 'self' 'unsafe-inline' 'unsafe-eval' data: gap: content: https://*.googleapis.com https://*.firebaseio.com https://*.google.com blob:; 
+                 img-src * 'self' data: blob: https:; 
+                 media-src * 'self' data: blob:; 
+                 connect-src * 'self' https: ws: wss: data: blob:; 
+                 style-src * 'self' 'unsafe-inline'; 
+                 script-src * 'self' 'unsafe-inline' 'unsafe-eval' data: blob:;">
   
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">

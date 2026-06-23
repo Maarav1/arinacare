@@ -8,6 +8,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
+import 'package:webview_flutter_web/webview_flutter_web.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
@@ -195,11 +196,16 @@ class _AIScreenState extends State<AIScreen>
     _initializeApiKey();
     _initializeWebView();
     _initializeFocusNode();
-    // Initialize ads
-    MobileAds.instance.initialize();
-    _loadBannerAd();
-    _loadInterstitialAd();
-    _startInterstitialTimer();
+
+    // ===== WEB COMPATIBILITY: Skip ads on web =====
+    if (!kIsWeb) {
+      // Initialize ads only on mobile
+      MobileAds.instance.initialize();
+      _loadBannerAd();
+      _loadInterstitialAd();
+      _startInterstitialTimer();
+    }
+
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
     _messageController.addListener(_onMessageTextChanged);
@@ -278,11 +284,16 @@ class _AIScreenState extends State<AIScreen>
     _interestsController.dispose();
     _inputFocusNode?.dispose();
     _scrollController.dispose();
-    _bannerAd.dispose();
-    _interstitialTimer?.cancel();
-    if (_interstitialAd != null) {
-      _interstitialAd!.dispose();
+
+    // ===== WEB COMPATIBILITY: Only dispose ads on mobile =====
+    if (!kIsWeb) {
+      _bannerAd.dispose();
+      _interstitialTimer?.cancel();
+      if (_interstitialAd != null) {
+        _interstitialAd!.dispose();
+      }
     }
+
     await _saveConversation();
   }
 
@@ -434,6 +445,11 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Widget _buildBannerAd() {
+    // ===== WEB COMPATIBILITY: No ads on web =====
+    if (kIsWeb) {
+      return const SizedBox.shrink();
+    }
+
     if (!_isBannerAdLoaded) {
       return const SizedBox.shrink();
     }
@@ -839,7 +855,7 @@ Current Year: $currentYear''';
           'threshold': 'BLOCK_ONLY_HIGH',
         },
       ],
-    'tools': [
+      'tools': [
         {
           'google_search': {}, // <-- This activates real-time search
         },
@@ -1952,7 +1968,9 @@ Current Year: $currentYear''';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
           _lastIncompleteResponse = '';
-          _isLoading = true;
+          // FIX: On web the navigation delegate is not registered so
+          // _isLoading would never be reset to false. Keep it false on web.
+          _isLoading = !kIsWeb;
         });
       }
       await _controller.loadRequest(Uri.parse(url));
@@ -2234,23 +2252,45 @@ Current Year: $currentYear''';
   }
 
   void _initializeWebView() {
+    // ===== WEB COMPATIBILITY =====
+    if (kIsWeb) {
+      // Use web implementation
+      WebViewPlatform.instance = WebWebViewPlatform();
+    }
+
+    // Now create the controller with the appropriate platform
     late final PlatformWebViewControllerCreationParams params;
-    if (WebViewPlatform.instance is WebKitWebViewPlatform) {
-      params = WebKitWebViewControllerCreationParams(
-        allowsInlineMediaPlayback: true,
-        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
-      );
+
+    if (!kIsWeb) {
+      // Mobile: Use native implementations
+      if (WebViewPlatform.instance is WebKitWebViewPlatform) {
+        params = WebKitWebViewControllerCreationParams(
+          allowsInlineMediaPlayback: true,
+          mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+        );
+      } else {
+        params = const PlatformWebViewControllerCreationParams();
+      }
     } else {
+      // Web: Use web params
       params = const PlatformWebViewControllerCreationParams();
     }
 
     final WebViewController controller =
         WebViewController.fromPlatformCreationParams(params);
 
-    controller
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
-      ..setNavigationDelegate(
+    // ===== MOBILE ONLY SETTINGS =====
+    if (!kIsWeb) {
+      controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+      controller.setBackgroundColor(const Color(0x00000000));
+    }
+
+    // ===== NAVIGATION DELEGATE (MOBILE ONLY) =====
+    // webview_flutter_web does not implement createPlatformNavigationDelegate.
+    // Calling setNavigationDelegate on web throws UnimplementedError and
+    // crashes the entire screen. Guard it strictly behind !kIsWeb.
+    if (!kIsWeb) {
+      controller.setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
             if (mounted) {
@@ -2294,50 +2334,68 @@ Current Year: $currentYear''';
           },
         ),
       );
+    }
 
-    if (controller.platform is AndroidWebViewController) {
+    // ===== ANDROID SPECIFIC SETTINGS (MOBILE ONLY) =====
+    if (!kIsWeb && controller.platform is AndroidWebViewController) {
       AndroidWebViewController.enableDebugging(true);
       (controller.platform as AndroidWebViewController)
           .setMediaPlaybackRequiresUserGesture(false);
     }
 
     _controller = controller;
-    _setUserAgent();
+
+    // ===== WEB COMPATIBILITY: Skip user agent on web =====
+    if (!kIsWeb) {
+      _setUserAgent();
+    }
   }
 
   void _applyAccuracySettings(String url) {
-    final jsCode = """
-      function setAccuracySettings() {
-        document.body.style.backgroundColor = '#000000';
-        document.body.style.color = '#ffffff';
-        
-        if (window.location.href.includes('chat.openai.com')) {
-          setTimeout(() => {
-            const preciseElements = document.querySelectorAll('[class*="precise"], [class*="accurate"], [class*="temperature"');
-            preciseElements.forEach(el => {
-              if (el.textContent?.toLowerCase().includes('precise') || 
-                  el.textContent?.toLowerCase().includes('accurate')) {
-                el.click();
-              }
-            });
-          }, 2000);
-        }
-      }
-      
-      setAccuracySettings();
-      
-      const observer = new MutationObserver(setAccuracySettings);
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-      });
-    """;
+    // ===== WEB COMPATIBILITY: runJavaScript might not work on web =====
+    if (kIsWeb) return;
 
-    _controller.runJavaScript(jsCode);
+    final jsCode = """
+    function setAccuracySettings() {
+      document.body.style.backgroundColor = '#000000';
+      document.body.style.color = '#ffffff';
+      
+      if (window.location.href.includes('chat.openai.com')) {
+        setTimeout(() => {
+          const preciseElements = document.querySelectorAll('[class*="precise"], [class*="accurate"], [class*="temperature"');
+          preciseElements.forEach(el => {
+            if (el.textContent?.toLowerCase().includes('precise') || 
+                el.textContent?.toLowerCase().includes('accurate')) {
+              el.click();
+            }
+          });
+        }, 2000);
+      }
+    }
+    
+    setAccuracySettings();
+    
+    const observer = new MutationObserver(setAccuracySettings);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+  """;
+
+    try {
+      _controller.runJavaScript(jsCode);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Failed to run JavaScript: $e');
+      }
+    }
   }
 
   void _setUserAgent() async {
+    // ===== WEB COMPATIBILITY: User agent not needed on web =====
+    if (kIsWeb) return;
+
     const desktopUserAgent =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -3363,8 +3421,6 @@ Current Year: $currentYear''';
     }
   }
 }
-
-
 
 // UI Models
 class GeminiModel {

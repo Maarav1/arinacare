@@ -14,6 +14,33 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// ----------------------- Responsive Wrapper -----------------------
+class ResponsiveWrapper extends StatelessWidget {
+  final Widget child;
+  final double maxWidth;
+
+  const ResponsiveWrapper({
+    super.key,
+    required this.child,
+    this.maxWidth = 900,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!kIsWeb) {
+      return child;
+    }
+
+    return Center(
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: child,
+      ),
+    );
+  }
+}
+
 class NewsApiScreen extends StatefulWidget {
   const NewsApiScreen({super.key});
 
@@ -681,7 +708,7 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                height: 180,
+                height: kIsWeb ? 300 : 180, // ← CHANGE THIS LINE
                 width: double.infinity,
                 decoration: BoxDecoration(
                   color: Colors.grey.shade800,
@@ -744,12 +771,12 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
                 children: [
                   CachedNetworkImage(
                     imageUrl: article.urlToImage,
-                    height: 200,
+                    height: kIsWeb ? 300 : 200, // ← CHANGE THIS LINE
                     width: double.infinity,
                     fit: BoxFit.cover,
                     placeholder:
                         (context, url) => Container(
-                          height: 200,
+                          height: kIsWeb ? 300 : 200, // ← CHANGE THIS LINE
                           color: Colors.grey.shade800,
                           child: const Center(
                             child: CircularProgressIndicator(
@@ -759,7 +786,7 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
                         ),
                     errorWidget:
                         (context, url, error) => Container(
-                          height: 200,
+                          height: kIsWeb ? 300 : 200, // ← CHANGE THIS LINE
                           color: Colors.grey.shade800,
                           child: const Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -1230,6 +1257,123 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
     final sourceName = currentSource['name'] ?? 'News';
     final sourceLogo = currentSource['logo'] ?? '📰';
 
+    // Web layout
+    if (kIsWeb) {
+      return Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: Colors.black,
+        drawer: _buildDrawer(),
+        appBar: AppBar(
+          title: Row(
+            children: [
+              Text('$sourceLogo ', style: const TextStyle(fontSize: 20)),
+              Text(
+                '$sourceName News',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.black,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.menu, color: Colors.white),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+          actions: [_buildLiveTVPopup(), const SizedBox(width: 8)],
+        ),
+        body: SafeArea(
+          child: ResponsiveWrapper(
+            maxWidth: 900,
+            child: Column(
+              children: [
+                Expanded(
+                  child: SmartRefresher(
+                    controller: _refreshController,
+                    onRefresh: _onRefresh,
+                    enablePullDown: true,
+                    enablePullUp: false,
+                    header: const ClassicHeader(
+                      completeText: 'Refresh complete',
+                      refreshingText: 'Loading latest news...',
+                      releaseText: 'Release to refresh',
+                      idleText: 'Pull down to refresh',
+                      textStyle: TextStyle(color: Colors.white),
+                    ),
+                    child:
+                        _isLoading
+                            ? _buildLoadingWidget()
+                            : _hasError
+                            ? _buildErrorWidget()
+                            : _articles.isEmpty
+                            ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.article_outlined,
+                                    size: 64,
+                                    color: Colors.grey,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  const Text(
+                                    'No articles found',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ElevatedButton(
+                                    onPressed: _loadNews,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.blue,
+                                    ),
+                                    child: const Text(
+                                      'Retry',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                            : ListView.builder(
+                              padding: const EdgeInsets.only(bottom: 60),
+                              itemCount: _articles.length,
+                              itemBuilder:
+                                  (context, index) =>
+                                      _buildArticleItem(_articles[index]),
+                            ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        bottomNavigationBar:
+            _isBannerAdLoaded && _bannerAd != null
+                ? Container(
+                  height: _bannerAd!.size.height.toDouble(),
+                  color: Colors.black,
+                  child: AdWidget(ad: _bannerAd!),
+                )
+                : Container(
+                  height: 60,
+                  color: Colors.black,
+                  child: const Center(
+                    child: Text(
+                      '📰 Global News Hub',
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    ),
+                  ),
+                ),
+      );
+    }
+
+    // Mobile layout (original)
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Colors.black,

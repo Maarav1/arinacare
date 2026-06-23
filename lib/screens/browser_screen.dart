@@ -14,10 +14,7 @@ const String _interstitialAdUnitId = 'ca-app-pub-1472609237394607/3819175757';
 class BrowserScreen extends StatefulWidget {
   final String? initialUrl;
 
-  const BrowserScreen({
-    super.key,
-    this.initialUrl,
-  });
+  const BrowserScreen({super.key, this.initialUrl});
 
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
@@ -46,7 +43,7 @@ class _BrowserScreenState extends State<BrowserScreen>
   bool _isBannerAdLoaded = false;
   bool _isInterstitialAdLoaded = false;
 
-  // User agent for ArinaCave browser
+  // User agent
   static const String _userAgent =
       'Mozilla/5.0 (Linux; Android 10; ArinaCave Browser) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
@@ -84,24 +81,9 @@ class _BrowserScreenState extends State<BrowserScreen>
     },
   };
 
-  // Quick apps for homepage - SCROLLABLE
+  // Quick apps with categories
   static const List<Map<String, dynamic>> _quickApps = [
-    {
-      'name': 'Google',
-      'url': 'https://www.google.com',
-      'icon': Icons.search,
-      'color': Colors.blue,
-      'description': 'Search the web',
-      'category': 'Search',
-    },
-    {
-      'name': 'YouTube',
-      'url': 'https://www.youtube.com',
-      'icon': Icons.play_circle_filled,
-      'color': Colors.red,
-      'description': 'Watch videos',
-      'category': 'Entertainment',
-    },
+    // AI & Tools
     {
       'name': 'DeepSeek',
       'url': 'https://chat.deepseek.com',
@@ -109,22 +91,6 @@ class _BrowserScreenState extends State<BrowserScreen>
       'color': Colors.deepPurple,
       'description': 'AI Assistant',
       'category': 'AI',
-    },
-    {
-      'name': 'TikTok',
-      'url': 'https://www.tiktok.com',
-      'icon': Icons.music_note,
-      'color': Colors.black,
-      'description': 'Short videos',
-      'category': 'Entertainment',
-    },
-    {
-      'name': 'GitHub',
-      'url': 'https://www.github.com',
-      'icon': Icons.code,
-      'color': Colors.black,
-      'description': 'Code repository',
-      'category': 'Development',
     },
     {
       'name': 'ChatGPT',
@@ -135,7 +101,32 @@ class _BrowserScreenState extends State<BrowserScreen>
       'category': 'AI',
     },
     {
-      'name': 'Twitter',
+      'name': 'Google',
+      'url': 'https://www.google.com',
+      'icon': Icons.search,
+      'color': Colors.blue,
+      'description': 'Search the web',
+      'category': 'Search',
+    },
+    // Social Media
+    {
+      'name': 'TikTok',
+      'url': 'https://www.tiktok.com',
+      'icon': Icons.music_note,
+      'color': Colors.black,
+      'description': 'Short videos',
+      'category': 'Social',
+    },
+    {
+      'name': 'Instagram',
+      'url': 'https://www.instagram.com',
+      'icon': Icons.camera_alt,
+      'color': Colors.pink,
+      'description': 'Photo sharing',
+      'category': 'Social',
+    },
+    {
+      'name': 'Twitter/X',
       'url': 'https://twitter.com',
       'icon': Icons.chat,
       'color': Colors.blue,
@@ -151,52 +142,12 @@ class _BrowserScreenState extends State<BrowserScreen>
       'category': 'Social',
     },
     {
-      'name': 'Wikipedia',
-      'url': 'https://www.wikipedia.org',
-      'icon': Icons.menu_book,
-      'color': Colors.grey,
-      'description': 'Free encyclopedia',
-      'category': 'Reference',
-    },
-    {
-      'name': 'Amazon',
-      'url': 'https://www.amazon.com',
-      'icon': Icons.shopping_cart,
-      'color': Colors.orange,
-      'description': 'Online shopping',
-      'category': 'Shopping',
-    },
-    {
-      'name': 'Instagram',
-      'url': 'https://www.instagram.com',
-      'icon': Icons.camera_alt,
-      'color': Colors.pink,
-      'description': 'Photo sharing',
-      'category': 'Social',
-    },
-    {
       'name': 'Facebook',
       'url': 'https://www.facebook.com',
       'icon': Icons.people,
       'color': Colors.blue,
       'description': 'Social network',
       'category': 'Social',
-    },
-    {
-      'name': 'Netflix',
-      'url': 'https://www.netflix.com',
-      'icon': Icons.movie,
-      'color': Colors.red,
-      'description': 'Stream movies',
-      'category': 'Entertainment',
-    },
-    {
-      'name': 'Spotify',
-      'url': 'https://open.spotify.com',
-      'icon': Icons.music_note,
-      'color': Colors.green,
-      'description': 'Music streaming',
-      'category': 'Entertainment',
     },
     {
       'name': 'WhatsApp',
@@ -214,6 +165,40 @@ class _BrowserScreenState extends State<BrowserScreen>
       'description': 'Secure messaging',
       'category': 'Social',
     },
+    // Entertainment
+    {
+      'name': 'YouTube',
+      'url': 'https://www.youtube.com',
+      'icon': Icons.play_circle_filled,
+      'color': Colors.red,
+      'description': 'Watch videos',
+      'category': 'Entertainment',
+    },
+    {
+      'name': 'Netflix',
+      'url': 'https://www.netflix.com',
+      'icon': Icons.movie,
+      'color': Colors.red,
+      'description': 'Stream movies',
+      'category': 'Entertainment',
+    },
+    {
+      'name': 'Spotify',
+      'url': 'https://open.spotify.com',
+      'icon': Icons.music_note,
+      'color': Colors.green,
+      'description': 'Music streaming',
+      'category': 'Entertainment',
+    },
+    // Development
+    {
+      'name': 'GitHub',
+      'url': 'https://www.github.com',
+      'icon': Icons.code,
+      'color': Colors.black,
+      'description': 'Code repository',
+      'category': 'Development',
+    },
     {
       'name': 'Stack Overflow',
       'url': 'https://stackoverflow.com',
@@ -221,6 +206,15 @@ class _BrowserScreenState extends State<BrowserScreen>
       'color': Colors.orange,
       'description': 'Programming Q&A',
       'category': 'Development',
+    },
+    // Reference
+    {
+      'name': 'Wikipedia',
+      'url': 'https://www.wikipedia.org',
+      'icon': Icons.menu_book,
+      'color': Colors.grey,
+      'description': 'Free encyclopedia',
+      'category': 'Reference',
     },
     {
       'name': 'Medium',
@@ -238,13 +232,31 @@ class _BrowserScreenState extends State<BrowserScreen>
       'description': 'Q&A community',
       'category': 'Reference',
     },
+    // Shopping
     {
-      'name': 'Pinterest',
-      'url': 'https://www.pinterest.com',
-      'icon': Icons.push_pin,
+      'name': 'Amazon',
+      'url': 'https://www.amazon.com',
+      'icon': Icons.shopping_cart,
+      'color': Colors.orange,
+      'description': 'Online shopping',
+      'category': 'Shopping',
+    },
+    // News
+    {
+      'name': 'BBC News',
+      'url': 'https://www.bbc.com/news',
+      'icon': Icons.newspaper,
       'color': Colors.red,
-      'description': 'Discover ideas',
-      'category': 'Social',
+      'description': 'World news',
+      'category': 'News',
+    },
+    {
+      'name': 'CNN',
+      'url': 'https://www.cnn.com',
+      'icon': Icons.newspaper,
+      'color': Colors.red,
+      'description': 'Latest news',
+      'category': 'News',
     },
   ];
 
@@ -256,6 +268,7 @@ class _BrowserScreenState extends State<BrowserScreen>
   bool _javascriptEnabled = true;
   bool _enableAdBlock = false;
   int _adFrequency = 5;
+  String _selectedCategory = 'All';
 
   @override
   bool get wantKeepAlive => true;
@@ -276,86 +289,91 @@ class _BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<void> _initializeWebView() async {
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.transparent)
-      ..setUserAgent(_desktopMode
-          ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          : _userAgent)
-      ..setNavigationDelegate(NavigationDelegate(
-        onProgress: (progress) {
-          if (mounted) {
-            setState(() {
-              _progress = progress / 100;
-              _isLoading = progress < 100;
-            });
-          }
-        },
-        onPageStarted: (url) {
-          if (mounted) {
-            setState(() {
-              _currentUrl = url;
-              _isLoading = true;
-              _showHomepage = false;
-              _urlController.text = url;
-              _showSearchSuggestions = false;
-            });
-          }
-          _navigationCount++;
-          _maybeShowInterstitialAd();
+    _controller =
+        WebViewController()
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setBackgroundColor(Colors.transparent)
+          ..setUserAgent(
+            _desktopMode
+                ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                : _userAgent,
+          )
+          ..setNavigationDelegate(
+            NavigationDelegate(
+              onProgress: (progress) {
+                if (mounted) {
+                  setState(() {
+                    _progress = progress / 100;
+                    _isLoading = progress < 100;
+                  });
+                }
+              },
+              onPageStarted: (url) {
+                if (mounted) {
+                  setState(() {
+                    _currentUrl = url;
+                    _isLoading = true;
+                    _showHomepage = false;
+                    _urlController.text = url;
+                    _showSearchSuggestions = false;
+                  });
+                }
+                _navigationCount++;
+                _maybeShowInterstitialAd();
 
-          if (_history.isEmpty || _history.last != url) {
-            _history.add(url);
-          }
-        },
-        onPageFinished: (url) async {
-          final title = await _controller!.getTitle();
-          if (mounted) {
-            setState(() {
-              _currentUrl = url;
-              _isLoading = false;
-              _currentTitle = title ?? 'ArinaCave Browser';
-              _urlController.text = url;
-            });
-          }
-        },
-        onUrlChange: (change) {
-          if (mounted) {
-            setState(() {
-              _currentUrl = change.url ?? '';
-              _urlController.text = _currentUrl;
-            });
-          }
-        },
-        onNavigationRequest: (request) {
-          if (request.url.startsWith('mailto:') ||
-              request.url.startsWith('tel:') ||
-              request.url.startsWith('sms:')) {
-            _launchExternalUrl(request.url);
-            return NavigationDecision.prevent;
-          }
+                if (_history.isEmpty || _history.last != url) {
+                  _history.add(url);
+                }
+              },
+              onPageFinished: (url) async {
+                final title = await _controller!.getTitle();
+                if (mounted) {
+                  setState(() {
+                    _currentUrl = url;
+                    _isLoading = false;
+                    _currentTitle = title ?? 'ArinaCave Browser';
+                    _urlController.text = url;
+                  });
+                }
+              },
+              onUrlChange: (change) {
+                if (mounted) {
+                  setState(() {
+                    _currentUrl = change.url ?? '';
+                    _urlController.text = _currentUrl;
+                  });
+                }
+              },
+              onNavigationRequest: (request) {
+                if (request.url.startsWith('mailto:') ||
+                    request.url.startsWith('tel:') ||
+                    request.url.startsWith('sms:')) {
+                  _launchExternalUrl(request.url);
+                  return NavigationDecision.prevent;
+                }
 
-          if (request.url.contains('/download/') ||
-              request.url.endsWith('.apk') ||
-              request.url.endsWith('.zip') ||
-              request.url.endsWith('.pdf') ||
-              request.url.endsWith('.doc') ||
-              request.url.endsWith('.docx')) {
-            _showDownloadDialog(request.url);
-            return NavigationDecision.prevent;
-          }
+                if (request.url.contains('/download/') ||
+                    request.url.endsWith('.apk') ||
+                    request.url.endsWith('.zip') ||
+                    request.url.endsWith('.pdf') ||
+                    request.url.endsWith('.doc') ||
+                    request.url.endsWith('.docx')) {
+                  _showDownloadDialog(request.url);
+                  return NavigationDecision.prevent;
+                }
 
-          return NavigationDecision.navigate;
-        },
-      ))
-      ..addJavaScriptChannel(
-        'ArinaCave',
-        onMessageReceived: (JavaScriptMessage message) {
-          if (kDebugMode) {
-            print('JavaScript: ${message.message}');
-          }
-        },
-      );
+                return NavigationDecision.navigate;
+              },
+            ),
+          )
+          ..addJavaScriptChannel(
+            'ArinaCave',
+            onMessageReceived: (JavaScriptMessage message) {
+              if (kDebugMode) {
+                print('JavaScript: ${message.message}');
+              }
+            },
+          );
 
     if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
       await _loadUrl(widget.initialUrl!);
@@ -379,11 +397,9 @@ class _BrowserScreenState extends State<BrowserScreen>
           if (mounted) {
             setState(() => _isBannerAdLoaded = true);
           }
-          if (kDebugMode) print('Banner ad loaded');
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          if (kDebugMode) print('Banner ad failed to load: $error');
         },
       ),
     );
@@ -398,11 +414,8 @@ class _BrowserScreenState extends State<BrowserScreen>
         onAdLoaded: (ad) {
           _interstitialAd = ad;
           _isInterstitialAdLoaded = true;
-          if (kDebugMode) print('Interstitial ad loaded');
         },
-        onAdFailedToLoad: (error) {
-          if (kDebugMode) print('Interstitial ad failed to load: $error');
-        },
+        onAdFailedToLoad: (error) {},
       ),
     );
   }
@@ -455,13 +468,6 @@ class _BrowserScreenState extends State<BrowserScreen>
     try {
       if (await canLaunchUrl(Uri.parse(url))) {
         await launchUrl(Uri.parse(url));
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cannot launch: $url'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     } catch (e) {
       if (mounted) {
@@ -478,402 +484,354 @@ class _BrowserScreenState extends State<BrowserScreen>
   void _showDownloadDialog(String url) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
-        title: Text(
-          'Download File',
-          style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
-        ),
-        content: Text(
-          'Download file from $url?',
-          style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
+            title: Text(
+              'Download File',
               style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
             ),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _launchExternalUrl(url);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Downloading: $url'),
-                  backgroundColor: Colors.green,
+            content: Text(
+              'Download file from $url?',
+              style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.white : Colors.black,
+                  ),
                 ),
-              );
-            },
-            child: const Text('Download', style: TextStyle(color: Colors.blue)),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _launchExternalUrl(url);
+                },
+                child: const Text(
+                  'Download',
+                  style: TextStyle(color: Colors.blue),
+                ),
+              ),
+            ],
+          ),
+    );
+  }
+
+  List<String> get _categories {
+    final cats =
+        _quickApps.map((app) => app['category'] as String).toSet().toList();
+    cats.sort();
+    return cats;
+  }
+
+  List<Map<String, dynamic>> get _filteredApps {
+    if (_selectedCategory == 'All') {
+      return _quickApps;
+    }
+    return _quickApps
+        .where((app) => app['category'] == _selectedCategory)
+        .toList();
+  }
+
+  int _getGridColumns() {
+    final width = MediaQuery.of(context).size.width;
+    if (width < 400) return 3;
+    if (width < 600) return 4;
+    if (width < 900) return 5;
+    if (width < 1200) return 6;
+    return 8;
+  }
+
+  Widget _buildHomepage() {
+    return Container(
+      color: _darkMode ? Colors.black : Colors.grey[50],
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        slivers: [
+          // Header
+          SliverToBoxAdapter(child: _buildHeader()),
+
+          // Search Bar
+          SliverToBoxAdapter(child: _buildHomeSearchBar()),
+
+          // Search Suggestions
+          if (_showSearchSuggestions)
+            SliverToBoxAdapter(child: _buildSearchSuggestions()),
+
+          // Categories
+          SliverToBoxAdapter(child: _buildCategoryFilter()),
+
+          // Quick Apps Grid
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            sliver: SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: _getGridColumns(),
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 0.85,
+              ),
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final app = _filteredApps[index];
+                return _buildAppCard(app);
+              }, childCount: _filteredApps.length),
+            ),
+          ),
+
+          // Recent History
+          if (_history.isNotEmpty)
+            SliverToBoxAdapter(child: _buildRecentHistory()),
+
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors:
+              _darkMode
+                  ? [Colors.deepPurple[900]!, Colors.blue[900]!]
+                  : [Colors.deepPurple[100]!, Colors.blue[100]!],
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.public,
+              size: 50,
+              color: _darkMode ? Colors.white : Colors.deepPurple[800],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'ArinaCave Browser',
+            style: TextStyle(
+              color: _darkMode ? Colors.white : Colors.deepPurple[800],
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Fast • Secure • Private',
+            style: TextStyle(
+              color: _darkMode ? Colors.white70 : Colors.deepPurple[700],
+              fontSize: 14,
+              letterSpacing: 2,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildHomepage() {
-    final categories = _quickApps
-        .map((app) => app['category'] as String)
-        .toSet()
-        .toList()
-      ..sort();
-
+  Widget _buildHomeSearchBar() {
     return Container(
-      color: _darkMode ? Colors.black : Colors.grey[100],
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: Column(
-          children: [
-            // Welcome header with gradient
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+      padding: const EdgeInsets.all(16),
+      color: _darkMode ? Colors.grey[900] : Colors.white,
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: _darkMode
-                      ? [Colors.deepPurple[900]!, Colors.blue[900]!]
-                      : [Colors.deepPurple[100]!, Colors.blue[100]!],
+                color: _darkMode ? Colors.grey[800] : Colors.grey[200],
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _urlController,
+                focusNode: _urlFocusNode,
+                style: TextStyle(
+                  color: _darkMode ? Colors.white : Colors.black,
+                  fontSize: 16,
                 ),
-              ),
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.public,
-                      size: 50,
-                      color: _darkMode ? Colors.white : Colors.deepPurple[800],
-                    ),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Search or enter URL',
+                  hintStyle: TextStyle(
+                    color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                    fontSize: 16,
                   ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'SupaCave Browser',
-                    style: TextStyle(
-                      color: _darkMode ? Colors.white : Colors.deepPurple[800],
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'Roboto',
-                    ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Fast • Secure • Private',
-                    style: TextStyle(
-                      color: _darkMode ? Colors.white70 : Colors.deepPurple[700],
-                      fontSize: 14,
-                      letterSpacing: 2,
-                    ),
+                  prefixIcon: Icon(
+                    Icons.search,
+                    color: _darkMode ? Colors.grey[400] : Colors.grey[600],
                   ),
-                ],
-              ),
-            ),
-
-            // Search bar with menu
-            Container(
-              padding: const EdgeInsets.all(16),
-              color: _darkMode ? Colors.grey[900] : Colors.white,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _darkMode ? Colors.grey[800] : Colors.grey[200],
-                        borderRadius: BorderRadius.circular(25),
-                      ),
-                      child: TextField(
-                        controller: _urlController,
-                        focusNode: _urlFocusNode,
-                        style: TextStyle(
-                          color: _darkMode ? Colors.white : Colors.black,
-                          fontSize: 16,
-                        ),
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          hintText: 'Search or enter URL',
-                          hintStyle: TextStyle(
-                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                            fontSize: 16,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 18,
-                          ),
-                          prefixIcon: Icon(
-                            Icons.search,
-                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                          ),
-                        ),
-                        onSubmitted: _loadUrl,
-                        onTap: () {
-                          setState(() => _showSearchSuggestions = true);
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  FloatingActionButton(
-                    mini: true,
-                    backgroundColor: Colors.blue,
-                    onPressed: _showMainMenu,
-                    child: const Icon(Icons.menu, color: Colors.white),
-                  ),
-                ],
-              ),
-            ),
-
-            // Search suggestions
-            if (_showSearchSuggestions) _buildSearchSuggestions(),
-
-            // Quick Apps Section - SCROLLABLE
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '🚀 Quick Apps',
-                        style: TextStyle(
-                          color: _darkMode ? Colors.white : Colors.black,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.view_list,
-                          color: _darkMode ? Colors.white70 : Colors.grey[700],
-                        ),
-                        onPressed: () {
-                          // Toggle view mode
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap any app to launch instantly',
-                    style: TextStyle(
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      Icons.mic,
                       color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                      fontSize: 13,
                     ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Category tabs
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildCategoryChip('All', true),
-                        ...categories.map((category) =>
-                            _buildCategoryChip(category, false)),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Apps grid - SCROLLABLE
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 4,
-                      crossAxisSpacing: 15,
-                      mainAxisSpacing: 15,
-                      childAspectRatio: 0.9,
-                    ),
-                    itemCount: _quickApps.length,
-                    itemBuilder: (context, index) {
-                      final app = _quickApps[index];
-                      return GestureDetector(
-                        onTap: () => _loadUrl(app['url']),
-                        onLongPress: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('${app['name']}: ${app['description']}'),
-                            ),
-                          );
-                        },
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: _darkMode ? Colors.grey[900] : Colors.white,
-                            borderRadius: BorderRadius.circular(15),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      (app['color'] as Color).withValues(),
-                                      app['color'] as Color,
-                                    ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Icon(
-                                  app['icon'] as IconData,
-                                  color: Colors.white,
-                                  size: 28,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                app['name'] as String,
-                                style: TextStyle(
-                                  color: _darkMode ? Colors.white : Colors.black,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                app['category'] as String,
-                                style: TextStyle(
-                                  color: _darkMode ? Colors.grey[500] : Colors.grey[500],
-                                  fontSize: 9,
-                                ),
-                              ),
-                            ],
-                          ),
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Voice search coming soon!'),
                         ),
                       );
                     },
                   ),
-                ],
+                ),
+                onSubmitted: _loadUrl,
+                onTap: () {
+                  setState(() => _showSearchSuggestions = true);
+                },
               ),
             ),
-
-            // Recent history
-            if (_history.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.all(16),
-                color: _darkMode ? Colors.grey[900] : Colors.white,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '📜 Recent History',
-                          style: TextStyle(
-                            color: _darkMode ? Colors.white : Colors.black,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.clear_all,
-                            color: _darkMode ? Colors.white70 : Colors.grey[700],
-                            size: 20,
-                          ),
-                          onPressed: () {
-                            setState(() => _history.clear());
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 80,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _history.take(5).length,
-                        itemBuilder: (context, index) {
-                          final url = _history.reversed.toList()[index];
-                          return GestureDetector(
-                            onTap: () => _loadUrl(url),
-                            child: Container(
-                              width: 200,
-                              margin: const EdgeInsets.only(right: 10),
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: _darkMode ? Colors.grey[800] : Colors.grey[200],
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.history,
-                                    color: _darkMode ? Colors.white70 : Colors.grey[700],
-                                    size: 16,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    url.length > 30 ? '${url.substring(0, 30)}...' : url,
-                                    style: TextStyle(
-                                      color: _darkMode ? Colors.white70 : Colors.grey[700],
-                                      fontSize: 10,
-                                    ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            const SizedBox(height: 10),
-          ],
-        ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.blue,
+              borderRadius: BorderRadius.circular(30),
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.menu, color: Colors.white),
+              onPressed: _showMainMenu,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildCategoryChip(String label, bool isSelected) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: FilterChip(
-        label: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.white : (_darkMode ? Colors.white70 : Colors.grey[700]),
-            fontSize: 12,
-          ),
-        ),
-        selected: isSelected,
-        onSelected: (_) {
-          // Filter apps by category
+  Widget _buildCategoryFilter() {
+    final categories = ['All', ..._categories];
+    return Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      color: _darkMode ? Colors.grey[900] : Colors.white,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: categories.length,
+        itemBuilder: (context, index) {
+          final category = categories[index];
+          final isSelected = _selectedCategory == category;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(
+                category,
+                style: TextStyle(
+                  color:
+                      isSelected
+                          ? Colors.white
+                          : (_darkMode ? Colors.white70 : Colors.grey[700]),
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 13,
+                ),
+              ),
+              selected: isSelected,
+              onSelected: (_) {
+                setState(() => _selectedCategory = category);
+                HapticFeedback.lightImpact();
+              },
+              backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[200],
+              selectedColor: Colors.blue,
+              checkmarkColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+          );
         },
-        backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[200],
-        selectedColor: Colors.blue,
-        checkmarkColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+      ),
+    );
+  }
+
+  Widget _buildAppCard(Map<String, dynamic> app) {
+    return GestureDetector(
+      onTap: () => _loadUrl(app['url']),
+      onLongPress: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${app['name']}: ${app['description']}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: _darkMode ? Colors.grey[850] : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha((_darkMode ? 0.3 : 0.08) as int),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    (app['color'] as Color).withValues(),
+                    app['color'] as Color,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                app['icon'] as IconData,
+                color: Colors.white,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              app['name'] as String,
+              style: TextStyle(
+                color: _darkMode ? Colors.white : Colors.black,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              app['category'] as String,
+              style: TextStyle(
+                color: _darkMode ? Colors.grey[500] : Colors.grey[500],
+                fontSize: 10,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -881,14 +839,14 @@ class _BrowserScreenState extends State<BrowserScreen>
 
   Widget _buildSearchSuggestions() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: _darkMode ? Colors.grey[800]! : Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: _darkMode ? Colors.grey[850]! : Colors.white,
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(),
-            blurRadius: 8,
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
@@ -896,7 +854,7 @@ class _BrowserScreenState extends State<BrowserScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Search engine selection
+          // Search engine selector
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -950,12 +908,12 @@ class _BrowserScreenState extends State<BrowserScreen>
             ),
           ),
 
-          // Quick suggestions
-          ..._quickApps.take(8).map((app) {
+          // Suggestions
+          ..._quickApps.take(6).map((app) {
             return ListTile(
               leading: Container(
-                width: 32,
-                height: 32,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   color: app['color'] as Color,
                   borderRadius: BorderRadius.circular(8),
@@ -971,18 +929,19 @@ class _BrowserScreenState extends State<BrowserScreen>
                 style: TextStyle(
                   color: _darkMode ? Colors.white : Colors.black,
                   fontSize: 14,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
               subtitle: Text(
                 app['description'] as String,
                 style: TextStyle(
                   color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                  fontSize: 11,
+                  fontSize: 12,
                 ),
               ),
               trailing: Icon(
-                Icons.arrow_forward,
-                size: 16,
+                Icons.arrow_forward_ios,
+                size: 14,
                 color: _darkMode ? Colors.grey[400] : Colors.grey[600],
               ),
               onTap: () {
@@ -991,6 +950,92 @@ class _BrowserScreenState extends State<BrowserScreen>
               },
             );
           }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentHistory() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: _darkMode ? Colors.grey[900] : Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '📜 Recent History',
+                style: TextStyle(
+                  color: _darkMode ? Colors.white : Colors.black,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.clear_all,
+                  color: _darkMode ? Colors.white70 : Colors.grey[700],
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() => _history.clear());
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('History cleared'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 80,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _history.take(10).length,
+              itemBuilder: (context, index) {
+                final url = _history.reversed.toList()[index];
+                return GestureDetector(
+                  onTap: () => _loadUrl(url),
+                  child: Container(
+                    width: 180,
+                    margin: const EdgeInsets.only(right: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _darkMode ? Colors.grey[800] : Colors.grey[200],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.history,
+                          color: _darkMode ? Colors.white70 : Colors.grey[700],
+                          size: 16,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          url.length > 30 ? '${url.substring(0, 30)}...' : url,
+                          style: TextStyle(
+                            color:
+                                _darkMode ? Colors.white70 : Colors.grey[700],
+                            fontSize: 10,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -1018,18 +1063,21 @@ class _BrowserScreenState extends State<BrowserScreen>
                 icon: Icon(
                   Icons.arrow_back_ios_new,
                   size: 16,
-                  color: canGoBack
-                      ? (_darkMode ? Colors.white : Colors.black)
-                      : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
+                  color:
+                      canGoBack
+                          ? (_darkMode ? Colors.white : Colors.black)
+                          : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
                 ),
-                onPressed: canGoBack
-                    ? () async {
-                        await _controller?.goBack();
-                        HapticFeedback.lightImpact();
-                      }
-                    : null,
+                onPressed:
+                    canGoBack
+                        ? () async {
+                          await _controller?.goBack();
+                          HapticFeedback.lightImpact();
+                        }
+                        : null,
                 style: IconButton.styleFrom(
-                  backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
+                  backgroundColor:
+                      _darkMode ? Colors.grey[800] : Colors.grey[300],
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -1049,18 +1097,21 @@ class _BrowserScreenState extends State<BrowserScreen>
                 icon: Icon(
                   Icons.arrow_forward_ios,
                   size: 16,
-                  color: canGoForward
-                      ? (_darkMode ? Colors.white : Colors.black)
-                      : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
+                  color:
+                      canGoForward
+                          ? (_darkMode ? Colors.white : Colors.black)
+                          : (_darkMode ? Colors.grey[600] : Colors.grey[400]),
                 ),
-                onPressed: canGoForward
-                    ? () async {
-                        await _controller?.goForward();
-                        HapticFeedback.lightImpact();
-                      }
-                    : null,
+                onPressed:
+                    canGoForward
+                        ? () async {
+                          await _controller?.goForward();
+                          HapticFeedback.lightImpact();
+                        }
+                        : null,
                 style: IconButton.styleFrom(
-                  backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
+                  backgroundColor:
+                      _darkMode ? Colors.grey[800] : Colors.grey[300],
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -1105,7 +1156,8 @@ class _BrowserScreenState extends State<BrowserScreen>
                         border: InputBorder.none,
                         hintText: 'Search or enter URL',
                         hintStyle: TextStyle(
-                          color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                          color:
+                              _darkMode ? Colors.grey[400] : Colors.grey[600],
                           fontSize: 14,
                         ),
                         contentPadding: const EdgeInsets.symmetric(
@@ -1144,9 +1196,10 @@ class _BrowserScreenState extends State<BrowserScreen>
               size: 18,
               color: _darkMode ? Colors.white : Colors.black,
             ),
-            onPressed: _isLoading
-                ? () => _controller?.reload()
-                : () => _controller?.reload(),
+            onPressed:
+                _isLoading
+                    ? () => _controller?.reload()
+                    : () => _controller?.reload(),
             style: IconButton.styleFrom(
               backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[300],
               shape: RoundedRectangleBorder(
@@ -1218,7 +1271,8 @@ class _BrowserScreenState extends State<BrowserScreen>
                   decoration: BoxDecoration(
                     border: Border(
                       bottom: BorderSide(
-                        color: _darkMode ? Colors.grey[800]! : Colors.grey[200]!,
+                        color:
+                            _darkMode ? Colors.grey[800]! : Colors.grey[200]!,
                       ),
                     ),
                   ),
@@ -1243,9 +1297,14 @@ class _BrowserScreenState extends State<BrowserScreen>
                               ),
                             ),
                             Text(
-                              _currentTitle.isNotEmpty ? _currentTitle : 'Ready to browse',
+                              _currentTitle.isNotEmpty
+                                  ? _currentTitle
+                                  : 'Ready to browse',
                               style: TextStyle(
-                                color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                                color:
+                                    _darkMode
+                                        ? Colors.grey[400]
+                                        : Colors.grey[600],
                                 fontSize: 12,
                               ),
                               maxLines: 1,
@@ -1361,7 +1420,8 @@ class _BrowserScreenState extends State<BrowserScreen>
                         subtitle: Text(
                           'View websites in desktop version',
                           style: TextStyle(
-                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                            color:
+                                _darkMode ? Colors.grey[400] : Colors.grey[600],
                             fontSize: 12,
                           ),
                         ),
@@ -1369,9 +1429,11 @@ class _BrowserScreenState extends State<BrowserScreen>
                         onChanged: (value) {
                           setState(() {
                             _desktopMode = value;
-                            _controller?.setUserAgent(value
-                                ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                                : _userAgent);
+                            _controller?.setUserAgent(
+                              value
+                                  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                                  : _userAgent,
+                            );
                           });
                         },
                         activeColor: Colors.blue,
@@ -1388,7 +1450,8 @@ class _BrowserScreenState extends State<BrowserScreen>
                         subtitle: Text(
                           'Display ads for free browsing',
                           style: TextStyle(
-                            color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                            color:
+                                _darkMode ? Colors.grey[400] : Colors.grey[600],
                             fontSize: 12,
                           ),
                         ),
@@ -1440,14 +1503,15 @@ class _BrowserScreenState extends State<BrowserScreen>
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(context),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _darkMode ? Colors.grey[800] : Colors.grey[200],
+                      backgroundColor:
+                          _darkMode ? Colors.grey[800] : Colors.grey[200],
                       minimumSize: const Size(double.infinity, 45),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(25),
                       ),
                     ),
                     child: Text(
-                  'Close',
+                      'Close',
                       style: TextStyle(
                         color: _darkMode ? Colors.white : Colors.black,
                         fontSize: 14,
@@ -1515,73 +1579,83 @@ class _BrowserScreenState extends State<BrowserScreen>
   void _showHistory() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
-        title: Text(
-          'Browser History',
-          style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          height: 300,
-          child: _history.isEmpty
-              ? Center(
-                  child: Text(
-                    'No history yet',
-                    style: TextStyle(
-                      color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: _history.length,
-                  itemBuilder: (context, index) {
-                    final url = _history.reversed.toList()[index];
-                    return ListTile(
-                      leading: const Icon(Icons.history, size: 20),
-                      title: Text(
-                        url.length > 40 ? '${url.substring(0, 40)}...' : url,
-                        style: TextStyle(
-                          color: _darkMode ? Colors.white : Colors.black,
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.open_in_new, size: 16),
-                        onPressed: () => _loadUrl(url),
-                      ),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _loadUrl(url);
-                      },
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Close',
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
+            title: Text(
+              'Browser History',
               style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
             ),
-          ),
-          if (_history.isNotEmpty)
-            TextButton(
-              onPressed: () {
-                setState(() => _history.clear());
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('History cleared'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              },
-              child: const Text('Clear All', style: TextStyle(color: Colors.red)),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 300,
+              child:
+                  _history.isEmpty
+                      ? Center(
+                        child: Text(
+                          'No history yet',
+                          style: TextStyle(
+                            color:
+                                _darkMode ? Colors.grey[400] : Colors.grey[600],
+                          ),
+                        ),
+                      )
+                      : ListView.builder(
+                        itemCount: _history.length,
+                        itemBuilder: (context, index) {
+                          final url = _history.reversed.toList()[index];
+                          return ListTile(
+                            leading: const Icon(Icons.history, size: 20),
+                            title: Text(
+                              url.length > 40
+                                  ? '${url.substring(0, 40)}...'
+                                  : url,
+                              style: TextStyle(
+                                color: _darkMode ? Colors.white : Colors.black,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.open_in_new, size: 16),
+                              onPressed: () => _loadUrl(url),
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _loadUrl(url);
+                            },
+                          );
+                        },
+                      ),
             ),
-        ],
-      ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Close',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.white : Colors.black,
+                  ),
+                ),
+              ),
+              if (_history.isNotEmpty)
+                TextButton(
+                  onPressed: () {
+                    setState(() => _history.clear());
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('History cleared'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Clear All',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
+            ],
+          ),
     );
   }
 
@@ -1687,26 +1761,28 @@ class _BrowserScreenState extends State<BrowserScreen>
                   DropdownButton<String>(
                     value: _defaultSearchEngine,
                     isExpanded: true,
-                    items: _searchEngines.entries.map((entry) {
-                      return DropdownMenuItem(
-                        value: entry.key,
-                        child: Row(
-                          children: [
-                            Icon(
-                              entry.value['icon'] as IconData,
-                              color: entry.value['color'] as Color,
+                    items:
+                        _searchEngines.entries.map((entry) {
+                          return DropdownMenuItem(
+                            value: entry.key,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  entry.value['icon'] as IconData,
+                                  color: entry.value['color'] as Color,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  entry.value['name'] as String,
+                                  style: TextStyle(
+                                    color:
+                                        _darkMode ? Colors.white : Colors.black,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              entry.value['name'] as String,
-                              style: TextStyle(
-                                color: _darkMode ? Colors.white : Colors.black,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
+                          );
+                        }).toList(),
                     onChanged: (value) {
                       setState(() => _defaultSearchEngine = value!);
                     },
@@ -1731,7 +1807,9 @@ class _BrowserScreenState extends State<BrowserScreen>
                       setState(() {
                         _javascriptEnabled = value;
                         _controller?.setJavaScriptMode(
-                          value ? JavaScriptMode.unrestricted : JavaScriptMode.disabled,
+                          value
+                              ? JavaScriptMode.unrestricted
+                              : JavaScriptMode.disabled,
                         );
                       });
                     },
@@ -1782,7 +1860,8 @@ class _BrowserScreenState extends State<BrowserScreen>
                       setState(() => _adFrequency = value.toInt());
                     },
                     activeColor: Colors.blue,
-                    inactiveColor: _darkMode ? Colors.grey[700] : Colors.grey[300],
+                    inactiveColor:
+                        _darkMode ? Colors.grey[700] : Colors.grey[300],
                   ),
 
                   // Clear data
@@ -1802,50 +1881,57 @@ class _BrowserScreenState extends State<BrowserScreen>
                     onTap: () {
                       showDialog(
                         context: context,
-                        builder: (context) => AlertDialog(
-                          backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
-                          title: Text(
-                            'Clear Browser Data',
-                            style: TextStyle(
-                              color: _darkMode ? Colors.white : Colors.black,
-                            ),
-                          ),
-                          content: Text(
-                            'This will clear history, cookies, and cache. Continue?',
-                            style: TextStyle(
-                              color: _darkMode ? Colors.white : Colors.black,
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: Text(
-                                'Cancel',
+                        builder:
+                            (context) => AlertDialog(
+                              backgroundColor:
+                                  _darkMode ? Colors.grey[900] : Colors.white,
+                              title: Text(
+                                'Clear Browser Data',
                                 style: TextStyle(
-                                  color: _darkMode ? Colors.white : Colors.black,
+                                  color:
+                                      _darkMode ? Colors.white : Colors.black,
                                 ),
                               ),
-                            ),
-                            TextButton(
-                              onPressed: () {
-                                setState(() => _history.clear());
-                                _controller?.clearCache();
-                                Navigator.pop(context);
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Browser data cleared'),
-                                    backgroundColor: Colors.green,
-                                  ),
-                                );
-                              },
-                              child: const Text(
-                                'Clear',
-                                style: TextStyle(color: Colors.red),
+                              content: Text(
+                                'This will clear history, cookies, and cache. Continue?',
+                                style: TextStyle(
+                                  color:
+                                      _darkMode ? Colors.white : Colors.black,
+                                ),
                               ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: Text(
+                                    'Cancel',
+                                    style: TextStyle(
+                                      color:
+                                          _darkMode
+                                              ? Colors.white
+                                              : Colors.black,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() => _history.clear());
+                                    _controller?.clearCache();
+                                    Navigator.pop(context);
+                                    Navigator.pop(context);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Browser data cleared'),
+                                        backgroundColor: Colors.green,
+                                      ),
+                                    );
+                                  },
+                                  child: const Text(
+                                    'Clear',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
                       );
                     },
                   ),
@@ -1858,7 +1944,8 @@ class _BrowserScreenState extends State<BrowserScreen>
                       TextButton(
                         onPressed: () => Navigator.pop(context),
                         style: TextButton.styleFrom(
-                          foregroundColor: _darkMode ? Colors.white : Colors.black,
+                          foregroundColor:
+                              _darkMode ? Colors.white : Colors.black,
                         ),
                         child: const Text('Close'),
                       ),
@@ -1893,80 +1980,93 @@ class _BrowserScreenState extends State<BrowserScreen>
   void _showAboutDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
-        title: Row(
-          children: [
-            Icon(Icons.public, color: Colors.blue, size: 30),
-            const SizedBox(width: 12),
-            Text(
-              'ArinaCave Browser',
-              style: TextStyle(
-                color: _darkMode ? Colors.white : Colors.black,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: _darkMode ? Colors.grey[900] : Colors.white,
+            title: Row(
+              children: [
+                Icon(Icons.public, color: Colors.blue, size: 30),
+                const SizedBox(width: 12),
+                Text(
+                  'ArinaCave Browser',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.white : Colors.black,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Version: 2.0.0',
-              style: TextStyle(
-                color: _darkMode ? Colors.white : Colors.black,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'A fast, secure, and modern web browser with advanced features.',
-              style: TextStyle(
-                color: _darkMode ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Features:',
-              style: TextStyle(
-                color: _darkMode ? Colors.white : Colors.black,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            ...['• Desktop Mode', '• Ad Block', '• Quick Apps', '• Dark Mode', '• Secure Browsing']
-                .map((feature) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        feature,
-                        style: TextStyle(
-                          color: _darkMode ? Colors.grey[300] : Colors.grey[700],
-                          fontSize: 12,
-                        ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Version: 2.0.0',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.white : Colors.black,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'A fast, secure, and modern web browser with advanced features.',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.grey[400] : Colors.grey[600],
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Features:',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.white : Colors.black,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...[
+                  '• Desktop Mode',
+                  '• Ad Block',
+                  '• Quick Apps',
+                  '• Dark Mode',
+                  '• Secure Browsing',
+                ].map(
+                  (feature) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      feature,
+                      style: TextStyle(
+                        color: _darkMode ? Colors.grey[300] : Colors.grey[700],
+                        fontSize: 12,
                       ),
-                    )),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Close',
-              style: TextStyle(color: _darkMode ? Colors.white : Colors.black),
+                    ),
+                  ),
+                ),
+              ],
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Close',
+                  style: TextStyle(
+                    color: _darkMode ? Colors.white : Colors.black,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _loadUrl('https://github.com');
+                },
+                child: const Text(
+                  'Website',
+                  style: TextStyle(color: Colors.blue),
+                ),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _loadUrl('https://github.com');
-            },
-            child: const Text('Website', style: TextStyle(color: Colors.blue)),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1975,7 +2075,7 @@ class _BrowserScreenState extends State<BrowserScreen>
     super.build(context);
 
     return Scaffold(
-      backgroundColor: _darkMode ? Colors.black : Colors.grey[100],
+      backgroundColor: _darkMode ? Colors.black : Colors.grey[50],
       body: SafeArea(
         child: Column(
           children: [
@@ -1995,15 +2095,12 @@ class _BrowserScreenState extends State<BrowserScreen>
             Expanded(
               child: Stack(
                 children: [
-                  // WebView
                   if (_controller != null) ...[
                     if (_showHomepage)
                       _buildHomepage()
                     else
                       WebViewWidget(controller: _controller!),
                   ],
-
-                  // Loading state
                   if (!_showHomepage && _controller == null)
                     const Center(child: CircularProgressIndicator()),
                 ],

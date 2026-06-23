@@ -111,6 +111,8 @@ dependencies:
   shelf: ^1.4.2
   shelf_web_socket: ^3.0.0
   timing: ^1.0.2
+  web: ^1.0.0
+  webview_flutter_web: ^0.2.0
   web_socket: ^1.0.0
   web_socket_channel: ^3.0.3
   webview_flutter: 4.13.0
@@ -142,6 +144,7 @@ dependencies:
   flutter_native_splash: ^2.4.4   # <-- Only as a dependency here
   clipboard: ^3.0.8
   audio_service: ^0.18.18
+  universal_html: ^2.3.0
 
 
 dev_dependencies:

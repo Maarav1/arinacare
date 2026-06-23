@@ -43,6 +43,34 @@ class NewsConstants {
   static const String successShare = 'Link copied to clipboard!';
 }
 
+// ----------------------- Responsive Wrapper -----------------------
+class ResponsiveWrapper extends StatelessWidget {
+  final Widget child;
+  final double maxWidth;
+
+  const ResponsiveWrapper({
+    super.key,
+    required this.child,
+    this.maxWidth = 900,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!kIsWeb) {
+      return child;
+    }
+
+    return Center(
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: child,
+      ),
+    );
+  }
+}
+
+
 // ----------------------- Auto Delete Service -----------------------
 class PostAutoDeleteService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -232,6 +260,7 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
   }
 
     void _showInterstitialIfNeeded() {
+      if (kIsWeb) return;
     _postViewCount++;
     if (_postViewCount % 5 == 0) {
       AdService.instance.showInterstitialAd();
@@ -409,38 +438,13 @@ class NewsFeedScreenState extends State<NewsFeedScreen> {
 
   // ----------------------- UI -----------------------
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    appBar: AppBar(
-      title: const Text('Arina Feed', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-      backgroundColor: Colors.blue,
-      elevation: 1,
-      actions: [
-        IconButton(
-          onPressed: _refreshPosts,
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          tooltip: 'Refresh',
-        ),
-      ],
-    ),
-    floatingActionButton: FloatingActionButton(
-      onPressed: _navigateToCreatePost,
-      backgroundColor: Colors.blue,
-      child: const Icon(Icons.add, color: Colors.white),
-    ),
-    body: SafeArea(
-      child: Container(
-        color: Colors.black, // THIS MAKES THE BACKGROUND BLACK
-        child: Column(
-          children: [
-            Expanded(child: _buildBody()),
-            const AdBanner(),
-          ],
-        ),
-      ),
-    ),
-  );
-}
+@override
+  Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return _buildWebLayout();
+    }
+    return _buildMobileLayout();
+  }
 
   Widget _buildBody() {
   if (_isLoading && _posts.isEmpty) return _buildLoadingState();
@@ -479,6 +483,82 @@ Widget build(BuildContext context) {
     ),
   );
 }
+
+// ============== WEB LAYOUT ==============
+
+  Widget _buildWebLayout() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Arina Feed',
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+        backgroundColor: Colors.blue,
+        elevation: 1,
+        actions: [
+          IconButton(
+            onPressed: _refreshPosts,
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            tooltip: 'Refresh',
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _navigateToCreatePost,
+        backgroundColor: Colors.blue,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+      body: SafeArea(
+        child: Container(
+          color: Colors.black,
+          child: ResponsiveWrapper(
+            maxWidth: 900,
+            child: Column(
+              children: [
+                Expanded(child: _buildBody()),
+                if (!kIsWeb) const AdBanner(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============== MOBILE LAYOUT ==============
+
+  Widget _buildMobileLayout() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Arina Feed',
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+        backgroundColor: Colors.blue,
+        elevation: 1,
+        actions: [
+          IconButton(
+            onPressed: _refreshPosts,
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            tooltip: 'Refresh',
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _navigateToCreatePost,
+        backgroundColor: Colors.blue,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+      body: SafeArea(
+        child: Container(
+          color: Colors.black,
+          child: Column(
+            children: [Expanded(child: _buildBody()), const AdBanner()],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildLoadingState() => const Center(child: CircularProgressIndicator());
 
@@ -682,14 +762,14 @@ class _PostCardState extends State<PostCard> {
                   imageUrl: imageUrl,
                   fit: BoxFit.cover,
                   width: double.infinity,
-                  height: 350,
+                  height: kIsWeb ? 400 : 350,
                   placeholder: (context, url) => Container(
-                    height: 350,
+                    height: kIsWeb ? 400 : 350,
                     color: Colors.grey.shade200,
                     child: const Center(child: CircularProgressIndicator()),
                   ),
                   errorWidget: (context, url, error) => Container(
-                    height: 350,
+                    height: kIsWeb ? 400 : 350,
                     color: Colors.grey.shade200,
                     child: const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)),
                   ),
@@ -1928,6 +2008,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
+
+  
 
   Widget _buildProfileHeader(String fullName, String profileImageUrl, bool isOnline, DateTime? lastSeen, String email) {
     return Column(

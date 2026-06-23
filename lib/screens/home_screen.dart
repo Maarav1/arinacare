@@ -1,7 +1,7 @@
 import 'dart:async';
 // ignore: unused_import
 import 'package:arina_cave/screens/feed_screen.dart';
-import 'package:flutter/foundation.dart';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,7 +15,7 @@ import 'package:shimmer/shimmer.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
-
+import 'package:flutter/foundation.dart';
 // Constants for better maintainability
 class AppConstants {
   static const String appName = 'ArinaCave';
@@ -499,7 +499,7 @@ class CommentManager {
   }
 }
 
-// Enhanced Home Screen with notification badge
+// Enhanced Home Screen with notification badge and web support
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -519,17 +519,18 @@ class _HomeScreenState extends State<HomeScreen> {
   // Local state for likes to prevent screen refresh
   final Map<String, bool> _localLikeStates = {};
   final Map<String, int> _localLikeCounts = {};
-    int _postViewCount = 0;
+  int _postViewCount = 0;
 
-    @override
+  @override
   void initState() {
     super.initState();
     _initializeApp();
     _setupNotificationListener();
-
   }
 
-    void _showInterstitialIfNeeded() {
+  void _showInterstitialIfNeeded() {
+    // Skip ads on web
+    if (kIsWeb) return;
     _postViewCount++;
     if (_postViewCount % 5 == 0) {
       AdService.instance.showInterstitialAd();
@@ -537,7 +538,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _initializeApp() async {
-    
     _setupOnlineStatus();
   }
 
@@ -598,23 +598,26 @@ class _HomeScreenState extends State<HomeScreen> {
   // Fixed like function - no screen refresh
   Future<void> _toggleLike(DocumentSnapshot post) async {
     final postId = post.id;
-    
+
     // Immediate local update for better UX
-    final currentLiked = _localLikeStates[postId] ?? 
+    final currentLiked =
+        _localLikeStates[postId] ??
         List<String>.from(post['likedBy'] ?? []).contains(_currentUser?.uid);
     final currentLikes = _localLikeCounts[postId] ?? post['likes'] ?? 0;
-    
+
     // Update local state only - no setState to prevent screen refresh
     _localLikeStates[postId] = !currentLiked;
-    _localLikeCounts[postId] = currentLiked ? currentLikes - 1 : currentLikes + 1;
+    _localLikeCounts[postId] =
+        currentLiked ? currentLikes - 1 : currentLikes + 1;
 
     try {
       final postRef = _firestore.collection('posts').doc(postId);
-      
+
       await postRef.update({
-        'likedBy': currentLiked
-            ? FieldValue.arrayRemove([_currentUser?.uid])
-            : FieldValue.arrayUnion([_currentUser?.uid]),
+        'likedBy':
+            currentLiked
+                ? FieldValue.arrayRemove([_currentUser?.uid])
+                : FieldValue.arrayUnion([_currentUser?.uid]),
         'likes': FieldValue.increment(currentLiked ? -1 : 1),
       });
 
@@ -627,12 +630,11 @@ class _HomeScreenState extends State<HomeScreen> {
           postId: postId,
         );
       }
-
     } catch (e) {
       // Revert local changes on error
       _localLikeStates[postId] = currentLiked;
       _localLikeCounts[postId] = currentLikes;
-      
+
       if (mounted) {
         AppUtils.showSnackBar(
           context,
@@ -646,7 +648,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _navigateToComments(String postId) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => HomeCommentsScreen(postId: postId)),
+      MaterialPageRoute(
+        builder: (context) => HomeCommentsScreen(postId: postId),
+      ),
     );
   }
 
@@ -699,93 +703,93 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildProfileButton() {
-  return FutureBuilder<DocumentSnapshot>(
-    future: _firestore.collection('users').doc(_currentUser?.uid).get(),
-    builder: (context, snapshot) {
-      String? profileImageUrl;
-      bool isOnline = false;
+    return FutureBuilder<DocumentSnapshot>(
+      future: _firestore.collection('users').doc(_currentUser?.uid).get(),
+      builder: (context, snapshot) {
+        String? profileImageUrl;
+        bool isOnline = false;
 
-      if (snapshot.hasData && snapshot.data!.exists) {
-        profileImageUrl = snapshot.data!['profilePictureUrl'];
-        isOnline = snapshot.data!['isOnline'] ?? false;
-      }
+        if (snapshot.hasData && snapshot.data!.exists) {
+          profileImageUrl = snapshot.data!['profilePictureUrl'];
+          isOnline = snapshot.data!['isOnline'] ?? false;
+        }
 
-      return Column(
-        children: [
-          GestureDetector(
-            onTap: () => _handleButtonAction('/profile'),
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.blue.shade100, Colors.blue.shade50],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                shape: BoxShape.circle,
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: Colors.transparent,
-                    backgroundImage: profileImageUrl != null
-                        ? CachedNetworkImageProvider(profileImageUrl)
-                        : null,
-                    child: profileImageUrl == null
-                        ? Icon(
-                            Icons.person,
-                            size: 24,
-                            color: Colors.blue.shade700,
-                          )
-                        : null,
+        return Column(
+          children: [
+            GestureDetector(
+              onTap: () => _handleButtonAction('/profile'),
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.blue.shade100, Colors.blue.shade50],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  if (isOnline) _buildOnlineIndicator(),
-                ],
+                  shape: BoxShape.circle,
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundColor: Colors.transparent,
+                      backgroundImage:
+                          profileImageUrl != null
+                              ? CachedNetworkImageProvider(profileImageUrl)
+                              : null,
+                      child:
+                          profileImageUrl == null
+                              ? Icon(
+                                Icons.person,
+                                size: 24,
+                                color: Colors.blue.shade700,
+                              )
+                              : null,
+                    ),
+                    if (isOnline) _buildOnlineIndicator(),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'Profile',
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.blue.shade700,
-              fontWeight: FontWeight.w500,
+            const SizedBox(height: 2),
+            Text(
+              'Profile',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.blue.shade700,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-        ],
-      );
-    },
-  );
-}
+          ],
+        );
+      },
+    );
+  }
 
-Widget _buildOnlineIndicator() {
-  return Positioned(
-    bottom: 0,
-    right: 0,
-    child: Container(
-      width: 14,
-      height: 14,
-      decoration: BoxDecoration(
-        color: Colors.green,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(), // ✅ Fixed
-            blurRadius: 2,
-            offset: const Offset(0, 1),
-          ),
-        ],
+  Widget _buildOnlineIndicator() {
+    return Positioned(
+      bottom: 0,
+      right: 0,
+      child: Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          color: Colors.green,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(),
+              blurRadius: 2,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
-
-
+    );
+  }
 
   Widget _buildInboxButton() {
     return StreamBuilder<QuerySnapshot>(
@@ -927,8 +931,209 @@ Widget _buildOnlineIndicator() {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
+  // ============== WEB LAYOUT ==============
+
+  Widget _buildWebLayout() {
+    return ScaffoldMessenger(
+      key: _scaffoldKey,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              SizedBox(
+                width: 80,
+                child: ElevatedButton.icon(
+                  onPressed: () => _handleButtonAction('/feed'),
+                  icon: const Icon(Icons.article, size: 16),
+                  label: const Text('Posts', style: TextStyle(fontSize: 12)),
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: Colors.blue.shade700,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ),
+              ),
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Arina',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.deepPurple,
+                    ),
+                  ),
+                  Text(
+                    'Cave',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => _showMoreOptions(context),
+                tooltip: 'Menu',
+              ),
+            ],
+          ),
+          automaticallyImplyLeading: false,
+          elevation: 2,
+          backgroundColor: Colors.white,
+        ),
+        body: Row(
+          children: [
+            // Left Sidebar - Navigation
+            Container(
+              width: 200,
+              color: Colors.grey.shade50,
+              child: _buildWebSidebar(),
+            ),
+            // Main Content - Centered
+            Expanded(
+              child: Center(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: _buildMainContent(),
+                ),
+              ),
+            ),
+            // Right Sidebar - Friends/Online
+            Container(
+              width: 220,
+              color: Colors.grey.shade50,
+              child: _buildWebRightSidebar(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebSidebar() {
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        const SizedBox(height: 8),
+        _buildWebNavItem(Icons.home, 'Home', '/home'),
+        _buildWebNavItem(Icons.feed, 'Feed', '/feed'),
+        _buildWebNavItem(Icons.people, 'Friends', '/friends'),
+        _buildWebNavItem(Icons.message, 'Messages', '/messages'),
+        _buildWebNavItem(Icons.inbox, 'Inbox', '/inbox'),
+        const Divider(),
+        _buildWebNavItem(Icons.radio, 'Radio', '/radio'),
+        _buildWebNavItem(Icons.tv, 'TV', '/tv'),
+        _buildWebNavItem(Icons.smart_toy, 'AI Chat', '/ai'),
+        const Divider(),
+        _buildWebNavItem(Icons.person, 'Profile', '/profile'),
+        _buildWebNavItem(Icons.settings, 'Settings', '/settings'),
+      ],
+    );
+  }
+
+  Widget _buildWebNavItem(IconData icon, String label, String route) {
+    return ListTile(
+      leading: Icon(icon, size: 20, color: Colors.grey.shade700),
+      title: Text(
+        label,
+        style: TextStyle(color: Colors.grey.shade800, fontSize: 13),
+      ),
+      dense: true,
+      onTap: () => _handleButtonAction(route),
+      hoverColor: Colors.blue.shade50,
+      selectedTileColor: Colors.blue.shade100,
+    );
+  }
+
+  Widget _buildWebRightSidebar() {
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        const Text(
+          'Online Friends',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildWebOnlineUser('Denismarav', true),
+        _buildWebOnlineUser('maryagola', true),
+        _buildWebOnlineUser('John Doe', false),
+        const SizedBox(height: 16),
+        const Text(
+          'Recent Activity',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildWebActivityItem('Denismarav liked a post'),
+        _buildWebActivityItem('maryagola commented on a post'),
+        _buildWebActivityItem('John Doe shared a post'),
+      ],
+    );
+  }
+
+  Widget _buildWebOnlineUser(String name, bool isOnline) {
+    return ListTile(
+      leading: Stack(
+        children: [
+          const CircleAvatar(
+            radius: 12,
+            backgroundColor: Colors.blueGrey,
+            child: Icon(Icons.person, size: 12, color: Colors.white),
+          ),
+          if (isOnline)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Colors.green,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      ),
+      title: Text(
+        name,
+        style: const TextStyle(fontSize: 13, color: Colors.grey),
+      ),
+      dense: true,
+    );
+  }
+
+  Widget _buildWebActivityItem(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+      ),
+    );
+  }
+
+  // ============== MOBILE LAYOUT ==============
+
+  Widget _buildMobileLayout() {
     return ScaffoldMessenger(
       key: _scaffoldKey,
       child: Scaffold(
@@ -1027,12 +1232,14 @@ Widget _buildOnlineIndicator() {
                     localLikeCounts: _localLikeCounts,
                     onPostViewed: _showInterstitialIfNeeded,
                   ),
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: const AdBanner(),
-                  ),
+                  // Only show AdBanner on mobile
+                  if (!kIsWeb)
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: const AdBanner(),
+                    ),
                 ],
               ),
             ),
@@ -1042,14 +1249,84 @@ Widget _buildOnlineIndicator() {
     );
   }
 
+  // ============== MAIN CONTENT (Shared) ==============
+
+  Widget _buildMainContent() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildFriendsButton(),
+              _buildFeatureButton(
+                icon: Icons.message,
+                label: 'Messages',
+                route: '/messages',
+                color: Colors.blue,
+              ),
+              _buildFeatureButton(
+                icon: Icons.online_prediction,
+                label: 'Online',
+                route: '/online',
+                color: Colors.green,
+              ),
+              _buildInboxButton(),
+              _buildProfileButton(),
+            ],
+          ),
+        ),
+        const Divider(thickness: 1, height: 1),
+        Expanded(
+          child: Stack(
+            children: [
+              _PostsStreamBuilder(
+                scrollController: _scrollController,
+                expandedPosts: _expandedPosts,
+                onToggleExpansion: _togglePostExpansion,
+                onLike: _toggleLike,
+                onComment: _navigateToComments,
+                onDelete: _handleDeletePost,
+                localLikeStates: _localLikeStates,
+                localLikeCounts: _localLikeCounts,
+                onPostViewed: _showInterstitialIfNeeded,
+              ),
+              // Only show AdBanner on mobile
+              if (!kIsWeb)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: const AdBanner(),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ============== BUILD METHOD ==============
+
+  @override
+  Widget build(BuildContext context) {
+    // Web layout with sidebar
+    if (kIsWeb) {
+      return _buildWebLayout();
+    }
+
+    // Mobile layout (your existing code)
+    return _buildMobileLayout();
+  }
+
   void _handleDeletePost(BuildContext context, DocumentSnapshot post) {
     _showDeleteDialog(post);
   }
 
   void _showMoreOptions(BuildContext context) {
-  // Navigate to full screen MenuScreen instead of showing bottom sheet
-  context.push('/menu');
-}
+    context.push('/menu');
+  }
 
   Future<void> _showDeleteDialog(DocumentSnapshot post) async {
     final confirmed = await showDialog<bool>(
