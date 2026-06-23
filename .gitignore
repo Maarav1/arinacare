@@ -10,6 +10,8 @@ ios/Pods/
 .fvm/
 .fvm/
 
+key.properties
+
 # Android
 android/.gradle
 android/.idea

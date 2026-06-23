@@ -1,13 +1,11 @@
 {
-    "name": "life_matters",
-    "short_name": "life_matters",
-    "start_url": ".",
+    "name": "ArinaCave",
+    "short_name": "ArinaCave",
+    "description": "All-in-one social app with AI, TV, Radio, and Chat",
+    "start_url": "/arinacare/",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
-    "prefer_related_applications": false,
+    "background_color": "#000000",
+    "theme_color": "#4a6cf7",
     "icons": [
         {
             "src": "icons/Icon-192.png",
