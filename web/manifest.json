@@ -1,11 +1,13 @@
 {
     "name": "ArinaCave",
     "short_name": "ArinaCave",
-    "description": "All-in-one social app with AI, TV, Radio, and Chat",
     "start_url": "/arinacare/",
     "display": "standalone",
     "background_color": "#000000",
-    "theme_color": "#4a6cf7",
+    "theme_color": "#000000",
+    "description": "ArinaCave - All-in-One App",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
     "icons": [
         {
             "src": "icons/Icon-192.png",

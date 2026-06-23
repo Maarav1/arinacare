@@ -322,7 +322,7 @@ class AppRouter {
         redirect: _routeGuard,
       ),
     /*  GoRoute(
-        path: '/deepSeek',
+        path: '/deepSeek', you can configure the tv to route to news api screen here
         name: 'deepSeek',
         pageBuilder: (context, state) {
           _logScreenView('deepSeek');
