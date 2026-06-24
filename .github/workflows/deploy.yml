@@ -28,9 +28,8 @@ jobs:
           echo "project_name=projects/750656775698" >> .env
           echo "project_no=750656775698" >> .env
 
-      - name: Build Flutter web
-        run: flutter build web --base-href /arinacare/ --release
-
+          - name: Build Flutter web
+          run: flutter build web --base-href /arinacare/ --release --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}
       - name: Remove .env from build output (security)
         run: rm -f build/web/assets/.env
 

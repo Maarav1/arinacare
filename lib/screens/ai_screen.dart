@@ -342,15 +342,24 @@ class _AIScreenState extends State<AIScreen>
   }
 
   void _initializeApiKey() {
-    try {
-      if (dotenv.isEveryDefined(['GEMINI_API_KEY'])) {
-        _geminiApiKey = dotenv.get('GEMINI_API_KEY');
-      } else {
+    if (kIsWeb) {
+      // On web: key is baked into compiled JS via --dart-define at build time.
+      // String.fromEnvironment is a compile-time constant — safe, not extractable
+      // as plaintext unlike a bundled .env asset file.
+      const webKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
+      _geminiApiKey = webKey;
+    } else {
+      // On mobile: read from .env file bundled as a Flutter asset
+      try {
+        if (dotenv.isEveryDefined(['GEMINI_API_KEY'])) {
+          _geminiApiKey = dotenv.get('GEMINI_API_KEY');
+        } else {
+          _geminiApiKey = '';
+        }
+      } catch (e) {
+        if (kDebugMode) print('Error loading API Key: $e');
         _geminiApiKey = '';
       }
-    } catch (e) {
-      if (kDebugMode) print('Error loading API Key: $e');
-      _geminiApiKey = '';
     }
 
     _geminiInitialized = _geminiApiKey.isNotEmpty;
@@ -358,6 +367,10 @@ class _AIScreenState extends State<AIScreen>
     if (_geminiInitialized && kDebugMode) {
       if (kDebugMode) {
         print('✅ Gemini API Key loaded successfully');
+      }
+    } else if (!_geminiInitialized && kDebugMode) {
+      if (kDebugMode) {
+        print('❌ Gemini API Key not found — check secrets or .env');
       }
     }
   }
