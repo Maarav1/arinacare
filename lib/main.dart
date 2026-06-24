@@ -35,7 +35,14 @@ Future<void> main() async {
 
       // Initialize core services (PARALLEL FOR SPEED)
       // 1. Load critical config first
-      await dotenv.load(fileName: ".env");
+      // 1. Load critical config first (mobile only — web uses build-time secrets)
+      if (!kIsWeb) {
+        try {
+          await dotenv.load(fileName: ".env");
+        } catch (e) {
+          if (kDebugMode) print('⚠️ dotenv load skipped: $e');
+        }
+      }
 
       // 2. Now initialize services that DEPEND on dotenv
       // ===== WEB COMPATIBILITY: Only initialize MobileAds on mobile =====
