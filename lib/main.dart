@@ -45,7 +45,7 @@ Future<void> main() async {
       }
 
       // 2. Now initialize services that DEPEND on dotenv
-      // ===== WEB COMPATIBILITY: Only initialize MobileAds on mobile =====
+      // ===== WEB COMPATIBILITY: Only initializ MobileAds on mobile =====
       // Google Mobile Ads doesn't work on web, so skip it
       if (!kIsWeb) {
         await MobileAds.instance.initialize();
