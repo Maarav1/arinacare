@@ -103,7 +103,7 @@ packages:
     source: hosted
     version: "2.7.0"
   async:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: async
       sha256: d2872f9c19731c2e5f10444b14686eb7cc85c76274bd6c16e1816bff9a3bab63
@@ -215,7 +215,7 @@ packages:
     source: hosted
     version: "4.1.1"
   build_resolvers:
-    dependency: "direct main"
+    dependency: "direct dev"
     description:
       name: build_resolvers
       sha256: ee4257b3f20c0c90e72ed2b57ad637f694ccba48839a821e87db762548c22a62
@@ -231,7 +231,7 @@ packages:
     source: hosted
     version: "2.5.4"
   build_runner_core:
-    dependency: "direct main"
+    dependency: "direct dev"
     description:
       name: build_runner_core
       sha256: "85fbbb1036d576d966332a3f5ce83f2ce66a40bea1a94ad2d5fc29a19a0d3792"
