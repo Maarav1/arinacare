@@ -346,7 +346,7 @@ class _AIScreenState extends State<AIScreen>
       // On web: key is baked into compiled JS via --dart-define at build time.
       // String.fromEnvironment is a compile-time constant — safe, not extractable
       // as plaintext unlike a bundled .env asset file.
-      const webKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: 'AQ.Ab8RN6JcSIiHO83GztAWZlauPYYnMQDDaIXq10AgkfI6wZRphw');
+      const webKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
       _geminiApiKey = webKey;
     } else {
       // On mobile: read from .env file bundled as a Flutter asset
