@@ -1,77 +1,148 @@
+# ============================================================
+# ArinaCave — GitHub Actions CI/CD Deploy to GitHub Pages
+# Repository: maarav1/arinacare
+# Live URL:   https://maarav1.github.io/arinacare/
+# ============================================================
+
 name: Deploy ArinaCave to GitHub Pages
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Manual deploy reason (optional)"
+        required: false
+        default: "Manual trigger"
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────
+# JOB 1 — BUILD
+# ─────────────────────────────────────────────
 jobs:
-  build-and-deploy:
+  build:
+    name: 🏗️ Build Flutter Web
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clone repository
-        run: |
-          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git --branch master --single-branch repo
+      # ── Step 1: Checkout the repository ──────────────────────
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install Flutter
-        run: |
-          cd $HOME
-          wget -q https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.2-stable.tar.xz
-          tar xf flutter_linux_3.29.2-stable.tar.xz
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+      # ── Step 2: Setup Java (required by some Flutter tooling) ─
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
-      - name: Enable web
+      # ── Step 3: Setup Flutter Stable ──────────────────────────
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+          cache-key: flutter-stable-${{ runner.os }}
+
+      # ── Step 4: Verify Flutter Installation ───────────────────
+      - name: 🔍 Flutter Version Info
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      # ── Step 5: Enable Flutter Web ────────────────────────────
+      - name: 🌐 Enable Flutter Web
         run: flutter config --enable-web
 
-      - name: Install dependencies
-        run: |
-          cd $GITHUB_WORKSPACE/repo
-          flutter pub get
+      # ── Step 6: Get Dependencies ──────────────────────────────
+      - name: 📦 Get Flutter Dependencies
+        run: flutter pub get
 
-      - name: Create firebase_config.js
-        run: |
-          cat > $GITHUB_WORKSPACE/repo/web/firebase_config.js << 'JSEOF'
-          const firebaseConfig = {
-              apiKey: "AIzaSyDUapVqUD9UieQ_4TSbLXF8f0rcibLNhMY",
-              authDomain: "lifematters-c466d.firebaseapp.com",
-              projectId: "lifematters-c466d",
-              storageBucket: "lifematters-c466d.firebasestorage.app",
-              messagingSenderId: "162639628951",
-              appId: "1:162639628951:web:f718315479b7657e2637d2",
-              measurementId: "G-899V77DEBH"
-          };
-          try {
-              if (typeof firebase !== 'undefined') {
-                  if (!firebase.apps.length) {
-                      firebase.initializeApp(firebaseConfig);
-                      console.log('Firebase initialized successfully');
-                  } else {
-                      console.log('Firebase already initialized');
-                  }
-                  firebase.auth().setPersistence(
-                      firebase.auth.Auth.Persistence.LOCAL
-                  ).catch((e) => console.error('Auth persistence error:', e));
-              }
-          } catch (error) {
-              console.error('Firebase initialization error:', error);
-          }
-          JSEOF
+      # ── Step 7: Analyze Code (optional but recommended) ───────
+      - name: 🔎 Analyze Code
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
 
-      - name: Build Flutter web
-        run: |
-          cd $GITHUB_WORKSPACE/repo
-          flutter build web --base-href /arinacare/ --release --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}
+      # ── Step 8: Run Tests (if tests exist) ────────────────────
+      - name: 🧪 Run Tests
+        run: flutter test --no-pub
+        continue-on-error: true
 
-      - name: Deploy to gh-pages
+      # ── Step 9: Build Flutter Web with API Key Injection ──────
+      # All API keys are injected via --dart-define from GitHub Secrets.
+      # NEVER hardcode API keys here. Add them in:
+      # GitHub Repo → Settings → Secrets and variables → Actions
+      - name: 🔨 Build Flutter Web (Release)
         run: |
-          cd $GITHUB_WORKSPACE/repo/build/web
-          git init
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git checkout -b gh-pages
-          git add .
-          git commit -m "Deploy ArinaCave"
-          git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git gh-pages
+          flutter build web \
+            --release \
+            --web-renderer canvaskit \
+            --base-href "/arinacare/" \
+            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+            --dart-define=OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+            --dart-define=CLAUDE_API_KEY=${{ secrets.CLAUDE_API_KEY }} \
+            --dart-define=DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }} \
+            --dart-define=BLACKBOX_API_KEY=${{ secrets.BLACKBOX_API_KEY }} \
+            --dart-define=APP_ENV=production
+
+      # ── Step 10: Verify Build Output ──────────────────────────
+      - name: 📁 List Build Output
+        run: ls -la build/web/
+
+      # ── Step 11: Fix Deep-Link Routing (SPA 404 Fix) ──────────
+      # Copies index.html as 404.html so direct URL navigation
+      # and page refreshes work correctly on GitHub Pages.
+      - name: 🔧 Fix SPA Routing (Copy index → 404)
+        run: cp build/web/index.html build/web/404.html
+
+      # ── Step 12: Create .nojekyll to prevent Jekyll processing ─
+      - name: ⚙️ Create .nojekyll File
+        run: touch build/web/.nojekyll
+
+      # ── Step 13: Configure GitHub Pages ───────────────────────
+      - name: 🛠️ Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      # ── Step 14: Upload Build Artifact to Pages ───────────────
+      - name: 📤 Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — DEPLOY
+  # ─────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      # ── Step 1: Deploy Pages Artifact ─────────────────────────
+      - name: 🌍 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # ── Step 2: Print Live URL ────────────────────────────────
+      - name: ✅ Deployment Complete
+        run: |
+          echo "=============================================="
+          echo "  ArinaCave is LIVE at:"
+          echo "  ${{ steps.deployment.outputs.page_url }}"
+          echo "=============================================="
