@@ -9,7 +9,7 @@ name: Deploy ArinaCave to GitHub Pages
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
     inputs:
       reason:
@@ -37,13 +37,11 @@ jobs:
     steps:
       # ── Step 1: Checkout the repository ──────────────────────
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v3
 
       # ── Step 2: Setup Java ────────────────────────────────────
       - name: ☕ Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v3
         with:
           distribution: "temurin"
           java-version: "17"
@@ -54,7 +52,6 @@ jobs:
         with:
           channel: "stable"
           cache: true
-          cache-key: flutter-stable-${{ runner.os }}
 
       # ── Step 4: Verify Flutter Installation ───────────────────
       - name: 🔍 Flutter Version Info
@@ -81,9 +78,6 @@ jobs:
         continue-on-error: true
 
       # ── Step 9: Build Flutter Web with Secret Injection ───────
-      # --web-renderer was removed in Flutter 3.22+, so it is
-      # not included here. Flutter now picks the renderer
-      # automatically (skwasm for release builds on stable).
       - name: 🔨 Build Flutter Web (Release)
         run: |
           flutter build web \
@@ -100,25 +94,20 @@ jobs:
         run: ls -la build/web/
 
       # ── Step 11: Fix SPA Deep-Link Routing ────────────────────
-      # Without this, refreshing any non-root route returns 404.
-      # GitHub Pages serves 404.html when a path is not found,
-      # so copying index.html there lets Flutter's router catch it.
       - name: 🔧 Copy index.html → 404.html
         run: cp build/web/index.html build/web/404.html
 
       # ── Step 12: Prevent Jekyll Processing ────────────────────
-      # Flutter uses _flutter.js and other underscore files.
-      # Jekyll strips those by default. This file disables Jekyll.
       - name: ⚙️ Create .nojekyll
         run: touch build/web/.nojekyll
 
       # ── Step 13: Configure GitHub Pages ───────────────────────
       - name: 🛠️ Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v3
 
       # ── Step 14: Upload Build Artifact ────────────────────────
       - name: 📤 Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v2
         with:
           path: build/web
 
@@ -137,7 +126,7 @@ jobs:
     steps:
       - name: 🌍 Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v2
 
       - name: ✅ Deployment Complete
         run: |
