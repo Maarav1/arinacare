@@ -4,10 +4,8 @@ on:
   push:
     branches: [ master ]
 
-    # ADD THIS - gives write permission to the bot
 permissions:
   contents: write
-
 
 jobs:
   build-and-deploy:
@@ -35,8 +33,11 @@ jobs:
 
       - name: Build Flutter web
         run: flutter build web --base-href /arinacare/ --release --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}
-      - name: Remove .env from build output (security)
-        run: rm -f build/web/assets/.env
+
+      - name: Remove sensitive files from build output
+        run: |
+          rm -f build/web/assets/.env
+          rm -f build/web/assets/packages/arina_cave/.env
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
