@@ -34,7 +34,7 @@ Future<void> main() async {
       }
 
       // Initialize core services (PARALLEL FOR SPEED)
-      // 1. Load critical config first g
+      // 1. Load critical config first 
       // 1. Load critical config first (mobile only — web uses build-time secrets)
       if (!kIsWeb) {
         try {
