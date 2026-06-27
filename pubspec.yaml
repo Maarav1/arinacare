@@ -9,154 +9,198 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  # ===== FIREBASE =====
   firebase_core: ^4.1.0
-  audio_session: ^0.2.2
-  applovin_max: ^4.6.1
   firebase_auth: ^6.0.2
   cloud_firestore: ^6.0.1
   cloud_firestore_web: ^5.0.1
-  app_links: ^6.4.1
-  battery_plus: 7.0.0
-  dio: ^5.4.0
-  rss_dart: ^1.0.14
-  html_unescape: ^2.0.0
-  duckdb_dart: ^0.4.0
-  drift: ^2.14.0
-  drift_dev: ^2.13.0
-  uni_links_desktop: 0.2.0
   firebase_storage: ^13.0.1
   firebase_messaging: ^16.0.1
   firebase_data_connect: ^0.2.0+2
   cloud_functions: ^6.0.1
   cloud_functions_platform_interface: ^5.3.1
   cloud_functions_web: ^5.0.1
-  cloudinary_flutter: ^1.3.0
-  cloudinary: ^1.2.0
-  provider: ^6.1.5
-  image_picker: ^1.0.4
-  google_generative_ai: ^0.4.7
-  go_router: ^17.0.0
-  flutter_riverpod: ^3.0.3
   firebase_analytics: ^12.0.1
   firebase_crashlytics: ^5.0.1
   firebase_functions: 0.0.1-dev
-  flutter_chat_ui: ^2.9.2
-  flutter_chat_types: ^3.6.2
-  flutter_dotenv: ^6.0.0
-  pull_to_refresh: ^2.0.0
-  geoflutterfire_plus: ^0.0.3
-  flutter_local_notifications: 19.5.0
-  flutter_map: ^8.1.1
-  carousel_slider: ^5.0.0
-  flutterflow_widgets: 0.0.1
-  getwidget: ^7.0.0
-  velocity_x: ^4.3.1
-  google_fonts: ^6.2.1
-  google_mobile_ads: ^6.0.0
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
-  connectivity_plus: ^7.0.0
-  fluttertoast: ^9.0.0
-  flutter_linkify: ^6.0.0
-  intl: ^0.20.2
-  in_app_update: ^4.0.2
-  in_app_review: 2.0.11
-  just_audio: ^0.10.5
-  uuid: ^4.0.0
-  uni_links_platform_interface: ^1.0.0
-  url_launcher: ^6.1.10
+  
+  # ===== AUTH =====
   google_sign_in: ^7.2.0
-  cached_network_image: ^3.3.0
-  image_cropper: ^11.0.0
-  draggable_widget: ^2.0.0
-  flutter_swipe_button: ^2.1.3
-  badges: ^3.1.2
-  shimmer: ^3.0.0
-  speech_to_text: ^7.0.0
-  sqlite3: 2.9.4
-  sqlite3_flutter_libs: ^0.5.15
-  flutter_spinkit: ^5.1.0
-  flutter_bloc: ^9.1.0
-  equatable: ^2.0.5
-  geolocator: ^14.0.0
-  google_maps_flutter: ^2.2.3
-  socket_io_client: ^3.1.2
-  emoji_picker_flutter: ^4.3.0
-  in_app_purchase: ^3.1.7
-  shared_preferences: ^2.1.1
-  share_plus: ^12.0.1
-  sqflite: ^2.3.0
-  path: ^1.8.3
-  path_provider: ^2.1.0
-  permission_handler: ^12.0.0+1
-  package_info_plus: ^9.0.0
-  device_info_plus: ^12.3.0
-  mockito: ^5.4.0
-  # build_config: ^1.1.2          # COMMENTED OUT - build tool, not needed at runtime
-  # build_daemon: ^4.0.4          # COMMENTED OUT - build tool, not needed at runtime
-  checked_yaml: ^2.0.3
-  # frontend_server_client: ^4.0.0 # COMMENTED OUT - build tool, not needed at runtime
-  # graphs: ^2.3.2               # COMMENTED OUT - build tool, not needed at runtime
-  http: ^1.1.0
-  # http_multi_server: ^3.2.2    # COMMENTED OUT - build tool, not needed at runtime
-  # io: ^1.0.5                   # COMMENTED OUT - build tool, not needed at runtime
-  # js: 0.6.7                    # COMMENTED OUT - SDK provides this
-  # pool: ^1.5.1                 # COMMENTED OUT - build tool, not needed at runtime
-  # pubspec_parse: ^1.5.0        # COMMENTED OUT - build tool, not needed at runtime
+  
+  # ===== STATE MANAGEMENT =====
+  provider: ^6.1.5
+  flutter_riverpod: ^3.0.3
   riverpod: ^3.0.3
   riverpod_annotation: ^3.0.3
-  # shelf: ^1.4.2                # COMMENTED OUT - build tool, not needed at runtime
-  # shelf_web_socket: ^3.0.0     # COMMENTED OUT - build tool, not needed at runtime
-  # timing: ^1.0.2               # COMMENTED OUT - build tool, not needed at runtime
-  web: ^1.1.0                  # COMMENTED OUT - SDK provides this
-  webview_flutter_web: ^0.2.0
+  flutter_bloc: ^9.1.0
+  bloc: ^9.0.0
+  
+  # ===== NAVIGATION =====
+  go_router: ^17.0.0
+  
+  # ===== UI =====
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  flutter_spinkit: ^5.1.0
+  lottie: ^2.7.0
+  shimmer: ^3.0.0
+  badges: ^3.1.2
+  getwidget: ^7.0.0
+  velocity_x: ^4.3.1
+  flutterflow_widgets: 0.0.1
+  carousel_slider: ^5.0.0
+  
+  # ===== CHAT =====
+  flutter_chat_ui: ^2.9.2
+  flutter_chat_types: ^3.6.2
+  emoji_picker_flutter: ^4.3.0
+  socket_io_client: ^3.1.2
+  
+  # ===== IMAGES =====
+  image_picker: ^1.0.4
+  image_cropper: ^11.0.0
+  cached_network_image: ^3.3.0
+  flutter_image_compress: ^2.4.0
+  cloudinary_flutter: ^1.3.0
+  cloudinary: ^1.2.0
+  
+  # ===== AI =====
+  google_generative_ai: ^0.4.7
+  
+  # ===== MAPS & LOCATION =====
+  google_maps_flutter: ^2.2.3
+  geolocator: ^14.0.0
+  geoflutterfire_plus: ^0.0.3
+  flutter_map: ^8.1.1
+  
+  # ===== STORAGE & DATABASE =====
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  sqflite: ^2.3.0
+  drift: ^2.14.0
+  drift_dev: ^2.13.0
+  sqlite3: 2.9.4
+  sqlite3_flutter_libs: ^0.5.15
+  shared_preferences: ^2.1.1
+  flutter_cache_manager: ^3.3.0
+  
+  # ===== NETWORK =====
+  http: ^1.1.0
+  dio: ^5.4.0
+  connectivity_plus: ^7.0.0
   web_socket: ^1.0.0
   web_socket_channel: ^3.0.3
+  web: ^1.1.0
+  
+  # ===== WEBVIEW =====
   webview_flutter: 4.13.0
   webview_flutter_android: 4.10.1
   webview_flutter_wkwebview: 3.23.0
-  ansicolor: ^2.0.3
-  archive: ^3.0.0
-  bloc: ^9.0.0
-  # async: ^2.12.0               # COMMENTED OUT - SDK provides this
-  # fake_async: ^1.3.2           # COMMENTED OUT - SDK provides this
-  html: ^0.15.6
-  # leak_tracker: 10.0.8          # COMMENTED OUT - SDK provides this
-  # leak_tracker_flutter_testing: ^3.0.9  # COMMENTED OUT - SDK provides this
-  # leak_tracker_testing: ^3.0.1  # COMMENTED OUT - SDK provides this
-  logger: ^2.6.2
-  lottie: ^2.7.0
-  # material_color_utilities: ^0.11.1  # COMMENTED OUT - SDK provides this
-  unicode: 0.3.1
+  webview_flutter_web: ^0.2.0
+  
+  # ===== AUDIO =====
+  audio_session: ^0.2.2
+  just_audio: ^0.10.5
+  audio_service: ^0.18.18
+  
+  # ===== NOTIFICATIONS =====
+  flutter_local_notifications: 19.5.0
+  in_app_update: ^4.0.2
+  in_app_review: 2.0.11
+  
+  # ===== PAYMENTS =====
+  google_mobile_ads: ^6.0.0
+  in_app_purchase: ^3.1.7
+  
+  # ===== LINKS =====
+  app_links: ^6.4.1
+  uni_links_desktop: 0.2.0
+  uni_links_platform_interface: ^1.0.0
+  url_launcher: ^6.1.10
   url_launcher_web: ^2.4.1
-  # vector_math: ^2.1.4           # COMMENTED OUT - SDK provides this
-  # vm_service: ^14.3.1           # COMMENTED OUT - SDK provides this
+  
+  # ===== PERMISSIONS & INFO =====
+  permission_handler: ^12.0.0+1
+  device_info_plus: ^12.3.0
+  package_info_plus: ^9.0.0
+  battery_plus: 7.0.0
+  
+  # ===== UTILITIES =====
+  intl: ^0.20.2
+  uuid: ^4.0.0
+  equatable: ^2.0.5
+  logger: ^2.6.2
+  fluttertoast: ^9.0.0
+  flutter_linkify: ^6.0.0
+  timeago: ^3.7.1
+  pull_to_refresh: ^2.0.0
+  draggable_widget: ^2.0.0
+  flutter_swipe_button: ^2.1.3
+  speech_to_text: ^7.0.0
+  share_plus: ^12.0.1
+  clipboard: ^3.0.8
+  flutter_native_splash: ^2.4.4
+  universal_html: ^2.3.0
+  html: ^0.15.6
+  path: ^1.8.3
+  path_provider: ^2.1.0
+  
+  # ===== RSS & PARSING =====
+  rss_dart: ^1.0.14
+  html_unescape: ^2.0.0
+  duckdb_dart: ^0.4.0
+  
+  # ===== SUPABASE =====
   supabase_flutter: ^2.9.1
   supabase: ^2.8.0
-  cupertino_icons: ^1.0.8
-  flutter_image_compress: ^2.4.0
-  flutter_cache_manager: ^3.3.0
-  timeago: ^3.7.1
-  flutter_native_splash: ^2.4.4
-  clipboard: ^3.0.8
-  audio_service: ^0.18.18
-  universal_html: ^2.3.0
+  
+  # ===== FLUTTER ENV =====
+  flutter_dotenv: ^6.0.0
+  
+  
+  
+  # ===== SDK PROVIDED (DO NOT DECLARE) =====
+  # async, fake_async, js, leak_tracker_*, material_color_utilities,
+  # vector_math, vm_service, web are all provided by Flutter SDK
 
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  
+  # ===== CODE GENERATION =====
+  build_runner: ^2.4.15
   json_serializable: ^6.7.1
   hive_generator: ^2.0.1
-  build_runner: ^2.4.15
   flutter_launcher_icons: ^0.14.3
+
+  # ===== BUILD TOOLS (DO NOT MOVE TO DEPENDENCIES) =====
+   
+  build_config: ^1.1.2
+  build_daemon: ^4.0.4
+  build_runner_core: ^9.1.2
+  build_resolvers: ^2.4.4
+  checked_yaml: ^2.0.3
+  frontend_server_client: ^4.0.0
+  graphs: ^2.3.2
+  http_multi_server: ^3.2.2
+  io: ^1.0.5
+  pool: ^1.5.1
+  pubspec_parse: ^1.5.0
+  shelf: ^1.4.2
+  shelf_web_socket: ^3.0.0
+  timing: ^1.0.2
+  ansicolor: ^2.0.3
+  mockito: ^5.4.0
+  
+  # ===== LINTING =====
   flutter_lints: ^5.0.0
   very_good_analysis: ^8.0.0
   golden_toolkit: ^0.15.0
+  
+  # ===== TOOLS =====
   change_app_package_name: ^1.3.0
-  # build_resolvers: ^2.4.4       # COMMENTED OUT - causing conflicts
-  # build_runner_core: ^9.1.2     # COMMENTED OUT - causing conflicts
-  # build_daemon: ^4.0.4          # COMMENTED OUT - causing conflicts
 
 flutter:
   uses-material-design: true
@@ -174,5 +218,7 @@ flutter_native_splash:
   color: "#000000"
   image: assets/images/arina1.png
 
-# dependency_overrides:
-#   analyzer: '>=6.4.0 <7.0.0'
+# ===== DEPENDENCY OVERRIDES =====
+# This resolves the analyzer conflict between hive_generator and build_runner_core
+dependency_overrides:
+  analyzer: '>=6.4.0 <7.0.0'
