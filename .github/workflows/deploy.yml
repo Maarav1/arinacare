@@ -106,8 +106,10 @@ jobs:
         uses: actions/configure-pages@v3
 
       # ── Step 14: Upload Build Artifact ────────────────────────
+      # v3 of upload-pages-artifact uses upload-artifact@v4 internally
+      # which is required — v2 used the now-banned upload-artifact@v3
       - name: 📤 Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
 
@@ -126,7 +128,7 @@ jobs:
     steps:
       - name: 🌍 Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v2
+        uses: actions/deploy-pages@v4
 
       - name: ✅ Deployment Complete
         run: |
