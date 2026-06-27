@@ -181,7 +181,7 @@ flutter_native_splash:
   image: assets/images/arina1.png
 
 
-dependency_overrides:
-  analyzer: 6.11.0
+#dependency_overrides:
+ # analyzer: 6.11.0
   
 
