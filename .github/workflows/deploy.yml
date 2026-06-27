@@ -23,7 +23,7 @@ jobs:
       - name: Install Flutter
         run: |
           cd $HOME
-          wget -q https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.0-stable.tar.xz
+          wget -q https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.3-stable.tar.xz
           tar xf flutter_linux_3.29.0-stable.tar.xz
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
