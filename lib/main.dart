@@ -33,15 +33,15 @@ Future<void> main() async {
         _enableEdgeToEdge();
       }
 
-      // Initialize core services (PARALLEL FOR SPEED)
-      // 1. Load critical config first g
-      // 1. Load critical config first (mobile only — web uses build-time secrets)
       if (!kIsWeb) {
         try {
           await dotenv.load(fileName: ".env");
         } catch (e) {
           if (kDebugMode) print('⚠️ dotenv load skipped: $e');
         }
+      } else {
+        // Web: dotenv not used. Keys come from --dart-define at build time.
+        // Suppress any dotenv asset fetch errors silently.
       }
 
       // 2. Now initialize services that DEPEND on dotenv
