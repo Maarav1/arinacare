@@ -9,7 +9,7 @@ name: Deploy ArinaCave to GitHub Pages
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
     inputs:
       reason:
@@ -41,7 +41,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Step 2: Setup Java (required by some Flutter tooling) ─
+      # ── Step 2: Setup Java ────────────────────────────────────
       - name: ☕ Setup Java
         uses: actions/setup-java@v4
         with:
@@ -70,19 +70,19 @@ jobs:
       - name: 📦 Get Flutter Dependencies
         run: flutter pub get
 
-      # ── Step 7: Analyze Code (optional but recommended) ───────
+      # ── Step 7: Analyze Code ──────────────────────────────────
       - name: 🔎 Analyze Code
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
 
-      # ── Step 8: Run Tests (if tests exist) ────────────────────
+      # ── Step 8: Run Tests ─────────────────────────────────────
       - name: 🧪 Run Tests
         run: flutter test --no-pub
         continue-on-error: true
 
-      # ── Step 9: Build Flutter Web with API Key Injection ──────
-      # All API keys are injected via --dart-define from GitHub Secrets.
-      # NEVER hardcode API keys here. Add them in:
+      # ── Step 9: Build Flutter Web with Secret Injection ───────
+      # Only the 4 variables that exist in your .env are injected.
+      # Add each one in:
       # GitHub Repo → Settings → Secrets and variables → Actions
       - name: 🔨 Build Flutter Web (Release)
         run: |
@@ -91,31 +91,33 @@ jobs:
             --web-renderer canvaskit \
             --base-href "/arinacare/" \
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-            --dart-define=OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
-            --dart-define=CLAUDE_API_KEY=${{ secrets.CLAUDE_API_KEY }} \
-            --dart-define=DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }} \
-            --dart-define=BLACKBOX_API_KEY=${{ secrets.BLACKBOX_API_KEY }} \
+            --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }} \
+            --dart-define=PROJECT_NAME=${{ secrets.PROJECT_NAME }} \
+            --dart-define=PROJECT_NO=${{ secrets.PROJECT_NO }} \
             --dart-define=APP_ENV=production
 
       # ── Step 10: Verify Build Output ──────────────────────────
       - name: 📁 List Build Output
         run: ls -la build/web/
 
-      # ── Step 11: Fix Deep-Link Routing (SPA 404 Fix) ──────────
-      # Copies index.html as 404.html so direct URL navigation
-      # and page refreshes work correctly on GitHub Pages.
-      - name: 🔧 Fix SPA Routing (Copy index → 404)
+      # ── Step 11: Fix SPA Deep-Link Routing ────────────────────
+      # Without this, refreshing any non-root route returns 404.
+      # GitHub Pages serves 404.html when a path is not found,
+      # so copying index.html there lets Flutter's router catch it.
+      - name: 🔧 Copy index.html → 404.html
         run: cp build/web/index.html build/web/404.html
 
-      # ── Step 12: Create .nojekyll to prevent Jekyll processing ─
-      - name: ⚙️ Create .nojekyll File
+      # ── Step 12: Prevent Jekyll Processing ────────────────────
+      # Flutter uses _flutter.js and other underscore files.
+      # Jekyll strips those by default. This file disables Jekyll.
+      - name: ⚙️ Create .nojekyll
         run: touch build/web/.nojekyll
 
       # ── Step 13: Configure GitHub Pages ───────────────────────
       - name: 🛠️ Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      # ── Step 14: Upload Build Artifact to Pages ───────────────
+      # ── Step 14: Upload Build Artifact ────────────────────────
       - name: 📤 Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -134,12 +136,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      # ── Step 1: Deploy Pages Artifact ─────────────────────────
       - name: 🌍 Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # ── Step 2: Print Live URL ────────────────────────────────
       - name: ✅ Deployment Complete
         run: |
           echo "=============================================="
