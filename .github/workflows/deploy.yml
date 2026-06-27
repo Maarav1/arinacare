@@ -9,7 +9,7 @@ name: Deploy ArinaCave to GitHub Pages
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
     inputs:
       reason:
@@ -81,14 +81,13 @@ jobs:
         continue-on-error: true
 
       # ── Step 9: Build Flutter Web with Secret Injection ───────
-      # Only the 4 variables that exist in your .env are injected.
-      # Add each one in:
-      # GitHub Repo → Settings → Secrets and variables → Actions
+      # --web-renderer was removed in Flutter 3.22+, so it is
+      # not included here. Flutter now picks the renderer
+      # automatically (skwasm for release builds on stable).
       - name: 🔨 Build Flutter Web (Release)
         run: |
           flutter build web \
             --release \
-            --web-renderer canvaskit \
             --base-href "/arinacare/" \
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
             --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }} \
