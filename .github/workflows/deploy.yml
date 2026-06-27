@@ -14,18 +14,14 @@ jobs:
     steps:
       - name: Clone repository
         run: |
-          git clone \
-            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
-            --branch master \
-            --single-branch \
-            repo
+          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git --branch master --single-branch repo
 
-            - name: Install Flutter
-            run: |
-              cd $HOME
-              wget -q https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.2-stable.tar.xz
-              tar xf flutter_linux_3.29.2-stable.tar.xz
-              echo "$HOME/flutter/bin" >> $GITHUB_PATH
+      - name: Install Flutter
+        run: |
+          cd $HOME
+          wget -q https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.29.2-stable.tar.xz
+          tar xf flutter_linux_3.29.2-stable.tar.xz
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
       - name: Enable web
         run: flutter config --enable-web
@@ -67,11 +63,7 @@ jobs:
       - name: Build Flutter web
         run: |
           cd $GITHUB_WORKSPACE/repo
-          flutter build web \
-            --base-href /arinacare/ \
-            --release \
-            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-            --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}
+          flutter build web --base-href /arinacare/ --release --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}
 
       - name: Deploy to gh-pages
         run: |
@@ -82,6 +74,4 @@ jobs:
           git checkout -b gh-pages
           git add .
           git commit -m "Deploy ArinaCave"
-          git push --force \
-            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
-            gh-pages
+          git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git gh-pages
