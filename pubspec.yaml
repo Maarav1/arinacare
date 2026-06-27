@@ -184,4 +184,4 @@ flutter_native_splash:
 dependency_overrides:
   analyzer: 6.11.0
   macros: 0.1.3-main.0
-  _macros: 0.3.3
+
