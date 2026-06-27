@@ -154,6 +154,7 @@ void _enableEdgeToEdge() {
 }
 
 Future<void> _handleInitialDeepLink() async {
+  if (kIsWeb) return;
   final appLinks = AppLinks();
   try {
     Uri? initialUri;
@@ -183,6 +184,7 @@ Future<void> _handleInitialDeepLink() async {
 }
 
 void _initDeepLinks() {
+  if (kIsWeb) return;
   final appLinks = AppLinks();
   appLinks.uriLinkStream.listen(
     (Uri? uri) {
