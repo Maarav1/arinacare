@@ -26,9 +26,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── Step 1: Clone Repository (no actions/checkout needed) ─
-      # We clone directly using GITHUB_TOKEN via HTTPS.
-      # This replaces actions/checkout entirely.
+      # ── Step 1: Clone Repository ───────────────────────────────
       - name: 📥 Clone Repository
         run: |
           git clone \
@@ -39,19 +37,18 @@ jobs:
           echo "✅ Repository cloned successfully"
           ls -la
 
-      # ── Step 2: Verify Java (pre-installed on ubuntu-latest) ──
+      # ── Step 2: Verify Java (pre-installed on ubuntu-latest) ───
       - name: ☕ Verify Java
         run: |
           java -version
           echo "JAVA_HOME=$JAVA_HOME"
 
-      # ── Step 3: Install Flutter via direct download ────────────
-      # We download the Flutter SDK directly from storage.googleapis.com
-      # as a tar.xz — no git clone, no external action.
-      # This is the official Flutter release distribution channel.
-      - name: 🐦 Install Flutter SDK
+      # ── Step 3: Install Flutter 3.29.2 ────────────────────────
+      # 3.29.2 ships with Dart 3.7.2 which satisfies ^3.7.2
+      # 3.22.3 only shipped with Dart 3.4.4 — too old
+      - name: 🐦 Install Flutter 3.29.2
         run: |
-          FLUTTER_VERSION="3.22.3"
+          FLUTTER_VERSION="3.29.2"
           FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
 
           echo "Downloading Flutter ${FLUTTER_VERSION}..."
@@ -97,8 +94,6 @@ jobs:
           flutter analyze --no-fatal-infos || true
 
       # ── Step 8: Build Flutter Web ──────────────────────────────
-      # Tests are skipped — failing test was killing the pipeline.
-      # Fix the test locally then re-add a test step here.
       - name: 🔨 Build Flutter Web Release
         run: |
           export PATH="$HOME/flutter/bin:$PATH"
@@ -125,9 +120,6 @@ jobs:
           echo "✅ 404.html and .nojekyll created"
 
       # ── Step 10: Deploy to gh-pages Branch ────────────────────
-      # Pure git push to gh-pages.
-      # No deploy action, no environment block, no protection rules.
-      # GITHUB_TOKEN is built into every ubuntu-latest runner.
       - name: 🚀 Push to gh-pages Branch
         run: |
           cd $GITHUB_WORKSPACE/build/web
