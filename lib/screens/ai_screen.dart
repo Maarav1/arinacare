@@ -343,7 +343,7 @@ class _AIScreenState extends State<AIScreen>
 
   void _initializeApiKey() {
     if (kIsWeb) {
-      // On web: key is baked into compiled JS via --dart-define at build time.
+      // On web: key is bake into compiled JS via --dart-define at build time.
       // String.fromEnvironment is a compile-time constant — safe, not extractable
       // as plaintext unlike a bundled .env asset file.
       const webKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
