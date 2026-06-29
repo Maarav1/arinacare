@@ -104,7 +104,7 @@ jobs:
           flutter build web \
             --release \
             --base-href "/arinacare/" \
-            
+            --dart-define=APP_ENV=production
 
           echo "✅ Build complete"
           ls -la build/web/
