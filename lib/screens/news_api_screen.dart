@@ -576,7 +576,26 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
     Navigator.pop(context);
   }
 
-  void _openFullArticle(String url) {
+  // REPLACE WITH THIS
+  void _openFullArticle(String url) async {
+    if (kIsWeb) {
+      // On web: open article in new browser tab
+      try {
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open article'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // On mobile: open in WebView as before
     _isLiveTVMode = false;
     _webViewController =
         WebViewController()
@@ -608,7 +627,29 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
     });
   }
 
-  void _openLiveTV(String liveUrl) {
+  // REPLACE WITH THIS
+  void _openLiveTV(String liveUrl) async {
+    if (kIsWeb) {
+      // On web: open in new browser tab — WebViewController does not work on web
+      try {
+        await launchUrl(
+          Uri.parse(liveUrl),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open: $liveUrl'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // On mobile: open in WebView as before
     _isLiveTVMode = true;
     _webViewController =
         WebViewController()
