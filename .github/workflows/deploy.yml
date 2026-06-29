@@ -45,7 +45,6 @@ jobs:
 
       # ── Step 3: Install Flutter 3.29.2 ────────────────────────
       # 3.29.2 ships with Dart 3.7.2 which satisfies ^3.7.2
-      # 3.22.3 only shipped with Dart 3.4.4 — too old
       - name: 🐦 Install Flutter 3.29.2
         run: |
           FLUTTER_VERSION="3.29.2"
@@ -94,6 +93,9 @@ jobs:
           flutter analyze --no-fatal-infos || true
 
       # ── Step 8: Build Flutter Web ──────────────────────────────
+      # GEMINI_API_KEY removed — Gemini now uses OAuth2 via Cloud Function proxy
+      # NEWS_API_KEY removed — News now proxied via Cloud Function
+      # Only Firebase project identifiers remain — these are not secret
       - name: 🔨 Build Flutter Web Release
         run: |
           export PATH="$HOME/flutter/bin:$PATH"
@@ -102,8 +104,6 @@ jobs:
           flutter build web \
             --release \
             --base-href "/arinacare/" \
-            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-            --dart-define=NEWS_API_KEY=${{ secrets.NEWS_API_KEY }} \
             --dart-define=PROJECT_NAME=${{ secrets.PROJECT_NAME }} \
             --dart-define=PROJECT_NO=${{ secrets.PROJECT_NO }} \
             --dart-define=APP_ENV=production

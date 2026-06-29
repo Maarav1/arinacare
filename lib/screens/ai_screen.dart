@@ -343,13 +343,11 @@ class _AIScreenState extends State<AIScreen>
 
   void _initializeApiKey() {
     if (kIsWeb) {
-      // On web: key is bake into compiled JS via --dart-define at build time.
-      // String.fromEnvironment is a compile-time constant — safe, not extractable
-      // as plaintext unlike a bundled .env asset file.
-      const webKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
-      _geminiApiKey = webKey;
+      // On web: proxy handles auth — no key needed in app
+      // Set initialized to true always on web since proxy is always available
+      _geminiApiKey = 'proxy';
+      _geminiInitialized = true;
     } else {
-      // On mobile: read from .env file bundled as a Flutter asset
       try {
         if (dotenv.isEveryDefined(['GEMINI_API_KEY'])) {
           _geminiApiKey = dotenv.get('GEMINI_API_KEY');
@@ -360,9 +358,8 @@ class _AIScreenState extends State<AIScreen>
         if (kDebugMode) print('Error loading API Key: $e');
         _geminiApiKey = '';
       }
+      _geminiInitialized = _geminiApiKey.isNotEmpty;
     }
-
-    _geminiInitialized = _geminiApiKey.isNotEmpty;
 
     if (_geminiInitialized && kDebugMode) {
       if (kDebugMode) {
@@ -833,10 +830,11 @@ Current Year: $currentYear''';
     String prompt, {
     List<Uint8List>? images,
   }) async* {
-    const String baseUrl =
-        'https://generativelanguage.googleapis.com/v1beta/models/';
+    // ===== WEB COMPATIBILITY: Use Cloud Function proxy on web =====
     final String url =
-        '$baseUrl$_selectedModel:streamGenerateContent?alt=sse&key=$_geminiApiKey';
+        kIsWeb
+            ? 'https://us-central1-lifematters-c466d.cloudfunctions.net/geminiProxy?model=$_selectedModel&streaming=true'
+            : 'https://generativelanguage.googleapis.com/v1beta/models/$_selectedModel:streamGenerateContent?alt=sse&key=$_geminiApiKey';
 
     final headers = {'Content-Type': 'application/json'};
 
@@ -848,7 +846,7 @@ Current Year: $currentYear''';
         'temperature': _temperature,
         'topK': 40,
         'topP': 0.95,
-        'maxOutputTokens': 65536, // INCREASED - no max output limit
+        'maxOutputTokens': 65536,
       },
       'safetySettings': [
         {

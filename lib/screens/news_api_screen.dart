@@ -350,6 +350,11 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
   }
 
   void _initializeNewsApi() {
+    if (kIsWeb) {
+      // On web: proxy handles the key server-side — no key needed in app
+      _newsApiKey = 'proxy';
+      return;
+    }
     try {
       _newsApiKey = dotenv.get('NEWS_API_KEY');
 
@@ -496,14 +501,23 @@ class _NewsApiScreenState extends State<NewsApiScreen> {
       final isSearchSource =
           _selectedSource == 'citizen-tv' || _selectedSource == 'k24-tv';
 
-      if (isSearchSource) {
-        final sourceName =
-            _sources.firstWhere((s) => s['id'] == _selectedSource)['name'];
+      if (kIsWeb) {
+        // ===== WEB: Use Cloud Function proxy =====
         url =
-            '$_baseUrl/everything?q=$sourceName&apiKey=$_newsApiKey&pageSize=30&sortBy=publishedAt';
+            isSearchSource
+                ? 'https://us-central1-lifematters-c466d.cloudfunctions.net/newsProxy?q=${Uri.encodeComponent(_sources.firstWhere((s) => s['id'] == _selectedSource)['name'])}&pageSize=30&sortBy=publishedAt'
+                : 'https://us-central1-lifematters-c466d.cloudfunctions.net/newsProxy?sources=$_selectedSource&pageSize=30';
       } else {
-        url =
-            '$_baseUrl/top-headlines?sources=$_selectedSource&apiKey=$_newsApiKey&pageSize=30';
+        // ===== MOBILE: Direct NewsAPI call =====
+        if (isSearchSource) {
+          final sourceName =
+              _sources.firstWhere((s) => s['id'] == _selectedSource)['name'];
+          url =
+              '$_baseUrl/everything?q=$sourceName&apiKey=$_newsApiKey&pageSize=30&sortBy=publishedAt';
+        } else {
+          url =
+              '$_baseUrl/top-headlines?sources=$_selectedSource&apiKey=$_newsApiKey&pageSize=30';
+        }
       }
 
       final response = await http.get(Uri.parse(url));
