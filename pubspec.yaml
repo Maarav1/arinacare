@@ -209,7 +209,7 @@ flutter:
     - assets/images/no_online.png
     - assets/images/arina1.png
     - assets/images/google_logo.png
-    - .env 
+  #  - .env 
     - assets/ai_thinking.json
     - assets/ai_welcome.json
 
