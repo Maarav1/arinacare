@@ -72,11 +72,6 @@ class _AIScreenState extends State<AIScreen>
   bool _hasPartialResponse = false;
   String _partialResponseOnError = '';
 
-  // ===== WEB SIDEBAR STATE =====
-  List<ConversationHive> _allConversations = [];
-  String? _selectedConversationId;
-  bool _webSidebarOpen = true;
-
   // Model selection variables
   String _selectedModel = 'gemini-2.5-flash';
   final List<GeminiModel> _availableModels = [
@@ -186,7 +181,7 @@ class _AIScreenState extends State<AIScreen>
   // Auto-scroll timer
   Timer? _autoScrollTimer;
 
-  // Scroll button visibility timer
+  // NEW: Scroll button visibility timer
   Timer? _scrollButtonTimer;
   bool _showScrollButton = false;
   bool _userScrolledUp = false;
@@ -204,6 +199,7 @@ class _AIScreenState extends State<AIScreen>
 
     // ===== WEB COMPATIBILITY: Skip ads on web =====
     if (!kIsWeb) {
+      // Initialize ads only on mobile
       MobileAds.instance.initialize();
       _loadBannerAd();
       _loadInterstitialAd();
@@ -221,6 +217,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
+  // NEW: Scroll listener for button visibility
   void _onScroll() {
     if (!_scrollController.hasClients) return;
 
@@ -246,6 +243,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
+  // NEW: Reset scroll button auto-hide timer
   void _resetScrollButtonTimer() {
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = Timer(const Duration(seconds: 5), () {
@@ -319,92 +317,6 @@ class _AIScreenState extends State<AIScreen>
     await _loadUserProfile();
     await _loadChatHistoryForModel(_selectedModel);
     _cleanOldConversations();
-
-    // ===== Load all conversations for web sidebar =====
-    await _loadAllConversations();
-  }
-
-  // ===== WEB SIDEBAR: Load all saved conversations =====
-  Future<void> _loadAllConversations() async {
-    final conversations =
-        _conversationBox.values.toList()..sort(
-          (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-        );
-    if (mounted) {
-      setState(() {
-        _allConversations = conversations;
-      });
-    }
-  }
-
-  // ===== WEB SIDEBAR: Load a specific conversation by ID =====
-  Future<void> _loadConversationById(String conversationId) async {
-    try {
-      final conversation = _conversationBox.values.firstWhere(
-        (c) => c.id == conversationId,
-      );
-
-      final messages =
-          _chatBox.values
-              .where((msg) => msg.conversationId == conversationId)
-              .toList()
-            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-
-      if (mounted) {
-        setState(() {
-          _selectedConversationId = conversationId;
-          _selectedModel = conversation.modelUsed;
-          _messages.clear();
-          _messages.addAll(
-            messages.map(
-              (msg) => ChatMessage(
-                text: msg.text,
-                isUser: msg.isUser,
-                timestamp: msg.timestamp,
-                isLoading: false,
-                isError: msg.isError,
-                thinkingProcess: msg.thinkingProcess,
-                thinkingTime:
-                    msg.thinkingTimeMs != null
-                        ? Duration(milliseconds: msg.thinkingTimeMs!)
-                        : null,
-                images: msg.imageBytes,
-                isIncomplete: msg.isIncomplete ?? false,
-              ),
-            ),
-          );
-          _showPlatformSelection = false;
-          _usingGeminiAPI = true;
-          _currentStreamText = '';
-          _isStreaming = false;
-          _lastIncompleteResponse = '';
-          _retryCount = 0;
-          _lastFailedPrompt = null;
-          _lastFailedImages = null;
-        });
-      }
-    } catch (e) {
-      if (kDebugMode) print('Error loading conversation: $e');
-    }
-  }
-
-  // ===== WEB SIDEBAR: Start a brand new chat =====
-  void _startNewChat() {
-    setState(() {
-      _messages.clear();
-      _currentStreamText = '';
-      _selectedConversationId = null;
-      _lastIncompleteResponse = '';
-      _retryCount = 0;
-      _lastFailedPrompt = null;
-      _lastFailedImages = null;
-      _selectedImages.clear();
-      _currentThinkingProcess = '';
-      _isThinkingComplete = false;
-      _isThinkingPhase = false;
-      _showPlatformSelection = false;
-      _usingGeminiAPI = true;
-    });
   }
 
   void _cleanOldConversations() async {
@@ -432,6 +344,7 @@ class _AIScreenState extends State<AIScreen>
   void _initializeApiKey() {
     if (kIsWeb) {
       // On web: proxy handles auth — no key needed in app
+      // Set initialized to true always on web since proxy is always available
       _geminiApiKey = 'proxy';
       _geminiInitialized = true;
     } else {
@@ -542,6 +455,7 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Widget _buildBannerAd() {
+    // ===== WEB COMPATIBILITY: No ads on web =====
     if (kIsWeb) {
       return const SizedBox.shrink();
     }
@@ -673,6 +587,7 @@ class _AIScreenState extends State<AIScreen>
           if (kDebugMode) {
             print('✅ Loaded ${messages.length} messages for model: $modelId');
           }
+          // Restore continue state from loaded history
           final lastAiMsg = _messages.lastWhere(
             (m) => !m.isUser && m.isIncomplete && !m.isError,
             orElse:
@@ -952,7 +867,9 @@ Current Year: $currentYear''';
         },
       ],
       'tools': [
-        {'google_search': {}},
+        {
+          'google_search': {}, // <-- This activates real-time search
+        },
       ],
     };
 
@@ -1039,6 +956,7 @@ Current Year: $currentYear''';
 
   Future<void> _retryFailedRequest() async {
     if (_lastFailedPrompt == null) {
+      // Recover last user message as the failed prompt
       final lastUser = _messages.lastWhere(
         (m) => m.isUser,
         orElse:
@@ -1083,7 +1001,9 @@ Current Year: $currentYear''';
     );
   }
 
+  // FIX: Continue now properly appends to existing response
   Future<void> _continueIncompleteResponse() async {
+    // Recover incomplete text from messages list if state was lost
     if (_lastIncompleteResponse.isEmpty) {
       final lastIncomplete = _messages.lastWhere(
         (m) => !m.isUser && m.isIncomplete && !m.isError,
@@ -1144,6 +1064,7 @@ Current Year: $currentYear''';
         onDone: () async {
           if (!mounted) return;
 
+          // FIX: Properly append without spaces
           final continuedResponse =
               _lastIncompleteResponse + accumulatedResponse;
 
@@ -1236,34 +1157,11 @@ Current Year: $currentYear''';
 
       ConversationHive currentConversation;
 
-      if (_selectedConversationId != null) {
-        // Save to the specifically selected conversation
-        try {
-          currentConversation = _conversationBox.values.firstWhere(
-            (c) => c.id == _selectedConversationId,
-          );
-          currentConversation.lastMessageTimestamp = DateTime.now();
-          currentConversation.messageCount = _messages.length;
-          await currentConversation.save();
-        } catch (_) {
-          // Conversation not found, create new
-          final conversationId =
-              DateTime.now().millisecondsSinceEpoch.toString();
-          currentConversation =
-              ConversationHive()
-                ..id = conversationId
-                ..lastMessageTimestamp = DateTime.now()
-                ..messageCount = _messages.length
-                ..modelUsed = _selectedModel;
-          await _conversationBox.add(currentConversation);
-          _selectedConversationId = conversationId;
-        }
-      } else if (conversations.isNotEmpty) {
+      if (conversations.isNotEmpty) {
         currentConversation = conversations.first;
         currentConversation.lastMessageTimestamp = DateTime.now();
         currentConversation.messageCount = _messages.length;
         await currentConversation.save();
-        _selectedConversationId = currentConversation.id;
       } else {
         final conversationId = DateTime.now().millisecondsSinceEpoch.toString();
         currentConversation =
@@ -1274,7 +1172,6 @@ Current Year: $currentYear''';
               ..modelUsed = _selectedModel;
 
         await _conversationBox.add(currentConversation);
-        _selectedConversationId = conversationId;
       }
 
       final finalConversationId = currentConversation.id;
@@ -1309,9 +1206,6 @@ Current Year: $currentYear''';
         print('✅ Saved conversation for model: $_selectedModel');
         print('📊 Message count: ${_messages.length}');
       }
-
-      // Refresh sidebar conversations list
-      await _loadAllConversations();
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error saving conversation for model $_selectedModel: $e');
@@ -2007,6 +1901,7 @@ Current Year: $currentYear''';
     );
   }
 
+  // FIX: Instant scroll - milliseconds not minutes
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
@@ -2017,12 +1912,13 @@ Current Year: $currentYear''';
     }
   }
 
+  // FIX: Scroll button on LEFT side
   Widget _buildScrollToBottomButton() {
     if (!_showScrollButton) return const SizedBox.shrink();
 
     return Positioned(
       bottom: 80,
-      left: 12,
+      left: 12, // MOVED TO LEFT
       child: GestureDetector(
         onTap: _scrollToBottom,
         child: Container(
@@ -2083,6 +1979,8 @@ Current Year: $currentYear''';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
           _lastIncompleteResponse = '';
+          // FIX: On web the navigation delegate is not registered so
+          // _isLoading would never be reset to false. Keep it false on web.
           _isLoading = !kIsWeb;
         });
       }
@@ -2197,7 +2095,7 @@ Current Year: $currentYear''';
             TextField(
               controller: _interestsController,
               style: const TextStyle(color: Colors.white),
-              maxLines: null,
+              maxLines: null, // NO MAX LINES - unlimited input
               keyboardType: TextInputType.multiline,
               decoration: InputDecoration(
                 hintText:
@@ -2312,11 +2210,8 @@ Current Year: $currentYear''';
           _retryCount = 0;
           _lastFailedPrompt = null;
           _lastFailedImages = null;
-          _selectedConversationId = null;
         });
       }
-
-      await _loadAllConversations();
 
       if (kDebugMode) {
         print('✅ Cleared chat history for model: $_selectedModel');
@@ -2368,13 +2263,17 @@ Current Year: $currentYear''';
   }
 
   void _initializeWebView() {
+    // ===== WEB COMPATIBILITY =====
     if (kIsWeb) {
+      // Use web implementation
       WebViewPlatform.instance = WebWebViewPlatform();
     }
 
+    // Now create the controller with the appropriate platform
     late final PlatformWebViewControllerCreationParams params;
 
     if (!kIsWeb) {
+      // Mobile: Use native implementations
       if (WebViewPlatform.instance is WebKitWebViewPlatform) {
         params = WebKitWebViewControllerCreationParams(
           allowsInlineMediaPlayback: true,
@@ -2384,17 +2283,23 @@ Current Year: $currentYear''';
         params = const PlatformWebViewControllerCreationParams();
       }
     } else {
+      // Web: Use web params
       params = const PlatformWebViewControllerCreationParams();
     }
 
     final WebViewController controller =
         WebViewController.fromPlatformCreationParams(params);
 
+    // ===== MOBILE ONLY SETTINGS =====
     if (!kIsWeb) {
       controller.setJavaScriptMode(JavaScriptMode.unrestricted);
       controller.setBackgroundColor(const Color(0x00000000));
     }
 
+    // ===== NAVIGATION DELEGATE (MOBILE ONLY) =====
+    // webview_flutter_web does not implement createPlatformNavigationDelegate.
+    // Calling setNavigationDelegate on web throws UnimplementedError and
+    // crashes the entire screen. Guard it strictly behind !kIsWeb.
     if (!kIsWeb) {
       controller.setNavigationDelegate(
         NavigationDelegate(
@@ -2442,6 +2347,7 @@ Current Year: $currentYear''';
       );
     }
 
+    // ===== ANDROID SPECIFIC SETTINGS (MOBILE ONLY) =====
     if (!kIsWeb && controller.platform is AndroidWebViewController) {
       AndroidWebViewController.enableDebugging(true);
       (controller.platform as AndroidWebViewController)
@@ -2450,12 +2356,14 @@ Current Year: $currentYear''';
 
     _controller = controller;
 
+    // ===== WEB COMPATIBILITY: Skip user agent on web =====
     if (!kIsWeb) {
       _setUserAgent();
     }
   }
 
   void _applyAccuracySettings(String url) {
+    // ===== WEB COMPATIBILITY: runJavaScript might not work on web =====
     if (kIsWeb) return;
 
     final jsCode = """
@@ -2496,6 +2404,7 @@ Current Year: $currentYear''';
   }
 
   void _setUserAgent() async {
+    // ===== WEB COMPATIBILITY: User agent not needed on web =====
     if (kIsWeb) return;
 
     const desktopUserAgent =
@@ -2508,1129 +2417,6 @@ Current Year: $currentYear''';
         print('Failed to set user agent: $e');
       }
     }
-  }
-
-  // =========================================================
-  // WEB SIDEBAR — DeepSeek-style chat history panel
-  // =========================================================
-  Widget _buildWebSidebar() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      width: _webSidebarOpen ? 260 : 0,
-      color: const Color(0xFF111111),
-      child:
-          _webSidebarOpen
-              ? Column(
-                children: [
-                  // ── Sidebar Header ─────────────────────────
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(16, 20, 12, 12),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.auto_awesome,
-                          color: Colors.orange,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'ArinaCave AI',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.chevron_left,
-                            color: Colors.white54,
-                            size: 20,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _webSidebarOpen = false;
-                            });
-                          },
-                          tooltip: 'Collapse sidebar',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // ── New Chat Button ────────────────────────
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    child: InkWell(
-                      onTap: _startNewChat,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withAlpha(25),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.orange.withAlpha(80),
-                            width: 1,
-                          ),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.add, color: Colors.orange, size: 18),
-                            SizedBox(width: 10),
-                            Text(
-                              'New Chat',
-                              style: TextStyle(
-                                color: Colors.orange,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // ── Section Label ──────────────────────────
-                  if (_allConversations.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 6,
-                      ),
-                      child: Row(
-                        children: [
-                          Text(
-                            'RECENT CHATS',
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                  // ── Conversation List ──────────────────────
-                  Expanded(
-                    child:
-                        _allConversations.isEmpty
-                            ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.chat_bubble_outline,
-                                    color: Colors.grey.shade700,
-                                    size: 36,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'No chats yet',
-                                    style: TextStyle(
-                                      color: Colors.grey.shade600,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Start a new chat above',
-                                    style: TextStyle(
-                                      color: Colors.grey.shade700,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                            : ListView.builder(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              itemCount: _allConversations.length,
-                              itemBuilder: (context, index) {
-                                final conv = _allConversations[index];
-                                final isSelected =
-                                    conv.id == _selectedConversationId;
-                                final model = _availableModels.firstWhere(
-                                  (m) => m.id == conv.modelUsed,
-                                  orElse:
-                                      () => GeminiModel(
-                                        id: conv.modelUsed,
-                                        name: conv.modelUsed,
-                                        description: '',
-                                        priority: '',
-                                        bestFor: '',
-                                        isRecommended: false,
-                                      ),
-                                );
-                                final date = DateFormat(
-                                  'MMM d',
-                                ).format(conv.lastMessageTimestamp);
-                                final time = DateFormat(
-                                  'HH:mm',
-                                ).format(conv.lastMessageTimestamp);
-
-                                return InkWell(
-                                  onTap: () => _loadConversationById(conv.id),
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Container(
-                                    margin: const EdgeInsets.symmetric(
-                                      vertical: 2,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color:
-                                          isSelected
-                                              ? Colors.orange.withAlpha(30)
-                                              : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(8),
-                                      border:
-                                          isSelected
-                                              ? Border.all(
-                                                color: Colors.orange.withAlpha(
-                                                  80,
-                                                ),
-                                                width: 1,
-                                              )
-                                              : null,
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.chat_bubble_outline,
-                                              size: 13,
-                                              color:
-                                                  isSelected
-                                                      ? Colors.orange
-                                                      : Colors.grey.shade500,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Expanded(
-                                              child: Text(
-                                                model.name,
-                                                style: TextStyle(
-                                                  color:
-                                                      isSelected
-                                                          ? Colors.orange
-                                                          : Colors.white70,
-                                                  fontSize: 12,
-                                                  fontWeight:
-                                                      isSelected
-                                                          ? FontWeight.bold
-                                                          : FontWeight.normal,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.access_time,
-                                              size: 10,
-                                              color: Colors.grey.shade600,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              '$date · $time',
-                                              style: TextStyle(
-                                                color: Colors.grey.shade600,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                            const Spacer(),
-                                            Text(
-                                              '${conv.messageCount} msgs',
-                                              style: TextStyle(
-                                                color: Colors.grey.shade700,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                  ),
-
-                  // ── Sidebar Footer: Profile + Settings ────
-                  Container(
-                    decoration: BoxDecoration(
-                      border: Border(
-                        top: BorderSide(color: Colors.grey.shade800, width: 1),
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      children: [
-                        InkWell(
-                          onTap: _showProfileDialog,
-                          borderRadius: BorderRadius.circular(8),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 8,
-                              horizontal: 4,
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.person_outline,
-                                  color: Colors.white54,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 10),
-                                const Text(
-                                  'Edit Profile',
-                                  style: TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        InkWell(
-                          onTap: _showSettings,
-                          borderRadius: BorderRadius.circular(8),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 8,
-                              horizontal: 4,
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.settings_outlined,
-                                  color: Colors.white54,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 10),
-                                const Text(
-                                  'Settings',
-                                  style: TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              )
-              : const SizedBox.shrink(),
-    );
-  }
-
-  // =========================================================
-  // WEB TOP BAR — model selector + status chips
-  // =========================================================
-  Widget _buildWebTopBar() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF111111),
-        border: Border(
-          bottom: BorderSide(color: Colors.grey.shade800, width: 1),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Sidebar toggle when closed
-          if (!_webSidebarOpen)
-            IconButton(
-              icon: const Icon(Icons.menu, color: Colors.white54, size: 20),
-              onPressed: () {
-                setState(() {
-                  _webSidebarOpen = true;
-                });
-              },
-              tooltip: 'Open sidebar',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          if (!_webSidebarOpen) const SizedBox(width: 12),
-
-          // Model name badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.orange.withAlpha(20),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.orange.withAlpha(100), width: 1),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.auto_awesome, size: 13, color: Colors.orange),
-                const SizedBox(width: 5),
-                Text(
-                  _availableModels
-                      .firstWhere((m) => m.id == _selectedModel)
-                      .name,
-                  style: const TextStyle(
-                    color: Colors.orange,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Thinking mode toggle
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                _enableThinking = !_enableThinking;
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color:
-                    _enableThinking
-                        ? Colors.purple.withAlpha(30)
-                        : Colors.blue.withAlpha(15),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color:
-                      _enableThinking
-                          ? Colors.purpleAccent.withAlpha(120)
-                          : Colors.blue.withAlpha(80),
-                  width: 1,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _enableThinking ? Icons.psychology : Icons.flash_on,
-                    size: 12,
-                    color: _enableThinking ? Colors.purpleAccent : Colors.blue,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _enableThinking ? 'Thinking' : 'Fast',
-                    style: TextStyle(
-                      color:
-                          _enableThinking ? Colors.purpleAccent : Colors.blue,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Temperature badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.teal.withAlpha(15),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.teal.withAlpha(80), width: 1),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.thermostat, size: 12, color: Colors.teal),
-                const SizedBox(width: 4),
-                Text(
-                  'Temp ${_temperature.toStringAsFixed(1)}',
-                  style: const TextStyle(
-                    color: Colors.teal,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Context badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.green.withAlpha(15),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.green.withAlpha(80), width: 1),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.memory, size: 12, color: Colors.green),
-                const SizedBox(width: 4),
-                Text(
-                  'Ctx $_maxContextMessages',
-                  style: const TextStyle(
-                    color: Colors.green,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const Spacer(),
-
-          // Streaming status
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color:
-                  _isStreaming
-                      ? Colors.green.withAlpha(20)
-                      : Colors.grey.withAlpha(15),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color:
-                    _isStreaming
-                        ? Colors.green.withAlpha(100)
-                        : Colors.grey.withAlpha(50),
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_isStreaming)
-                  const SizedBox(
-                    width: 10,
-                    height: 10,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
-                    ),
-                  )
-                else
-                  const Icon(
-                    Icons.check_circle_outline,
-                    size: 12,
-                    color: Colors.grey,
-                  ),
-                const SizedBox(width: 5),
-                Text(
-                  _isStreaming ? 'Streaming' : 'Ready',
-                  style: TextStyle(
-                    color: _isStreaming ? Colors.green : Colors.grey,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Model switcher button
-          PopupMenuButton<String>(
-            icon: const Icon(
-              Icons.model_training,
-              color: Colors.white54,
-              size: 20,
-            ),
-            tooltip: 'Change Model',
-            color: const Color(0xFF1A1A1A),
-            itemBuilder: (context) {
-              return _availableModels.map((model) {
-                final isActive = _selectedModel == model.id;
-                return PopupMenuItem<String>(
-                  value: model.id,
-                  child: Row(
-                    children: [
-                      Icon(
-                        isActive
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_off,
-                        color: isActive ? Colors.orange : Colors.grey,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            model.name,
-                            style: TextStyle(
-                              color: isActive ? Colors.orange : Colors.white70,
-                              fontSize: 13,
-                              fontWeight:
-                                  isActive
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                            ),
-                          ),
-                          Text(
-                            model.description,
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              }).toList();
-            },
-            onSelected: _changeModel,
-          ),
-
-          // More options
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white54, size: 20),
-            color: const Color(0xFF1A1A1A),
-            itemBuilder:
-                (context) => [
-                  PopupMenuItem(
-                    value: 'clear',
-                    child: Row(
-                      children: const [
-                        Icon(Icons.delete_outline, color: Colors.red, size: 16),
-                        SizedBox(width: 10),
-                        Text(
-                          'Clear Chat',
-                          style: TextStyle(color: Colors.red, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'share',
-                    child: Row(
-                      children: const [
-                        Icon(
-                          Icons.share_outlined,
-                          color: Colors.blue,
-                          size: 16,
-                        ),
-                        SizedBox(width: 10),
-                        Text(
-                          'Share Chat',
-                          style: TextStyle(color: Colors.blue, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'back',
-                    child: Row(
-                      children: const [
-                        Icon(Icons.apps, color: Colors.white54, size: 16),
-                        SizedBox(width: 10),
-                        Text(
-                          'All Platforms',
-                          style: TextStyle(color: Colors.white54, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-            onSelected: (value) {
-              if (value == 'clear') _clearChatHistory();
-              if (value == 'share') _shareConversation();
-              if (value == 'back') _showPlatformSelectionScreen();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  // =========================================================
-  // WEB CHAT BODY — centered content with constrained width
-  // =========================================================
-  Widget _buildWebChatBody() {
-    return Column(
-      children: [
-        // Messages area — centered and constrained
-        Expanded(
-          child:
-              _messages.isEmpty && _currentStreamText.isEmpty
-                  ? Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 560),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 72,
-                            height: 72,
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withAlpha(20),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: Colors.orange.withAlpha(60),
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.auto_awesome,
-                              size: 36,
-                              color: Colors.orange,
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          Text(
-                            _availableModels
-                                .firstWhere((m) => m.id == _selectedModel)
-                                .name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'How can I help you today?',
-                            style: TextStyle(
-                              color: Colors.grey.shade400,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _buildWebSuggestionChip('Explain a concept'),
-                              const SizedBox(width: 8),
-                              _buildWebSuggestionChip('Write code'),
-                              const SizedBox(width: 8),
-                              _buildWebSuggestionChip('Summarize text'),
-                            ],
-                          ),
-                          if (_userProfileBox.values.isEmpty) ...[
-                            const SizedBox(height: 20),
-                            GestureDetector(
-                              onTap: _showProfileDialog,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withAlpha(20),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.green.withAlpha(80),
-                                  ),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.person_add,
-                                      color: Colors.green,
-                                      size: 16,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Set up your profile for personalized responses',
-                                      style: TextStyle(
-                                        color: Colors.green,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  )
-                  : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.only(top: 24, bottom: 120),
-                    itemCount:
-                        _messages.length +
-                        (_currentStreamText.isNotEmpty || _isThinkingPhase
-                            ? 1
-                            : 0),
-                    itemBuilder: (context, index) {
-                      // Center and constrain each message
-                      Widget messageWidget;
-
-                      if (index < _messages.length) {
-                        messageWidget = ChatBubbleWithThinking(
-                          message: _messages[index],
-                          enableAutoScroll: _enableAutoScroll,
-                          onContinuePressed:
-                              _messages[index].isIncomplete
-                                  ? _continueIncompleteResponse
-                                  : null,
-                          onRetryPressed:
-                              _messages[index].canRetry
-                                  ? _retryFailedRequest
-                                  : null,
-                        );
-                      } else {
-                        if (_isThinkingPhase && _enableThinking) {
-                          messageWidget = Container(
-                            margin: const EdgeInsets.symmetric(vertical: 8),
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: Colors.cyan.withAlpha(15),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.cyanAccent.withAlpha(80),
-                                width: 1,
-                              ),
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(
-                                  Icons.psychology,
-                                  color: Colors.cyanAccent,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Thinking...',
-                                        style: TextStyle(
-                                          color: Colors.cyanAccent,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      if (_currentThinkingProcess.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 8,
-                                          ),
-                                          child: Text(
-                                            _currentThinkingProcess,
-                                            style: const TextStyle(
-                                              color: Colors.lightGreenAccent,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        } else {
-                          messageWidget = ChatBubbleWithThinking(
-                            message: ChatMessage(
-                              text: _currentStreamText,
-                              isUser: false,
-                              timestamp: DateTime.now(),
-                              isLoading: _isStreaming,
-                            ),
-                            enableAutoScroll: _enableAutoScroll,
-                            onContinuePressed: null,
-                            onRetryPressed: null,
-                          );
-                        }
-                      }
-
-                      // Wrap each message in a centered constrained box
-                      return Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 760),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: messageWidget,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-        ),
-
-        // Input bar — centered and constrained
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF0D0D0D),
-            border: Border(
-              top: BorderSide(color: Colors.grey.shade800, width: 1),
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: Column(
-                children: [
-                  // Image previews above input
-                  if (_selectedImages.isNotEmpty)
-                    Container(
-                      height: 72,
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _selectedImages.length,
-                        itemBuilder: (context, index) {
-                          return Stack(
-                            children: [
-                              Container(
-                                width: 64,
-                                height: 64,
-                                margin: const EdgeInsets.only(right: 8),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(8),
-                                  image: DecorationImage(
-                                    image: MemoryImage(_selectedImages[index]),
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: GestureDetector(
-                                  onTap: () => _removeImage(index),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(2),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.close,
-                                      size: 10,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-
-                  // Input row
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1A1A),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.grey.shade700, width: 1),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        // Image upload button
-                        if (_enableImageUpload)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8, bottom: 8),
-                            child: IconButton(
-                              icon: Icon(
-                                Icons.attach_file,
-                                color:
-                                    _selectedImages.isNotEmpty
-                                        ? Colors.orange
-                                        : Colors.grey.shade500,
-                                size: 18,
-                              ),
-                              onPressed: _pickImage,
-                              tooltip: 'Attach image',
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 32,
-                                minHeight: 32,
-                              ),
-                            ),
-                          ),
-
-                        // Text field
-                        Expanded(
-                          child: TextField(
-                            controller: _messageController,
-                            focusNode: _inputFocusNode,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
-                            maxLines: null,
-                            keyboardType: TextInputType.multiline,
-                            textInputAction: TextInputAction.newline,
-                            decoration: InputDecoration(
-                              hintText: 'Message Gemini...',
-                              hintStyle: TextStyle(
-                                color: Colors.grey.shade600,
-                                fontSize: 14,
-                              ),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 12,
-                              ),
-                            ),
-                            onSubmitted: (_) {
-                              if (!_isSendingMessage) {
-                                _sendGeminiMessage();
-                              }
-                            },
-                          ),
-                        ),
-
-                        // Stop or Send button
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8, bottom: 8),
-                          child:
-                              _isStreaming
-                                  ? IconButton(
-                                    icon: Container(
-                                      width: 32,
-                                      height: 32,
-                                      decoration: BoxDecoration(
-                                        color: Colors.red.withAlpha(30),
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                          color: Colors.red.withAlpha(80),
-                                        ),
-                                      ),
-                                      child: const Icon(
-                                        Icons.stop,
-                                        color: Colors.red,
-                                        size: 16,
-                                      ),
-                                    ),
-                                    onPressed: () async {
-                                      await _cancelCurrentStream();
-                                      if (mounted) {
-                                        setState(() {
-                                          _isSendingMessage = false;
-                                          _isStreaming = false;
-                                          _currentStreamText = '';
-                                          _currentThinkingProcess = '';
-                                          _isThinkingComplete = false;
-                                          _isThinkingPhase = false;
-                                        });
-                                      }
-                                    },
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(),
-                                  )
-                                  : IconButton(
-                                    icon: Container(
-                                      width: 32,
-                                      height: 32,
-                                      decoration: BoxDecoration(
-                                        color:
-                                            _messageController.text
-                                                        .trim()
-                                                        .isEmpty &&
-                                                    _selectedImages.isEmpty
-                                                ? Colors.grey.shade800
-                                                : Colors.orange,
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Icon(
-                                        Icons.arrow_upward,
-                                        color:
-                                            _messageController.text
-                                                        .trim()
-                                                        .isEmpty &&
-                                                    _selectedImages.isEmpty
-                                                ? Colors.grey.shade600
-                                                : Colors.white,
-                                        size: 16,
-                                      ),
-                                    ),
-                                    onPressed:
-                                        _isSendingMessage
-                                            ? null
-                                            : () async {
-                                              if (!_isSendingMessage) {
-                                                await _sendGeminiMessage();
-                                              }
-                                            },
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(),
-                                  ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 6),
-                  Text(
-                    'Gemini can make mistakes. Verify important information.',
-                    style: TextStyle(color: Colors.grey.shade700, fontSize: 11),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // Small suggestion chip for welcome screen on web
-  Widget _buildWebSuggestionChip(String label) {
-    return GestureDetector(
-      onTap: () {
-        _messageController.text = label;
-        _inputFocusNode?.requestFocus();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade900,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey.shade700, width: 1),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(color: Colors.grey.shade300, fontSize: 12),
-        ),
-      ),
-    );
   }
 
   Widget _buildPlatformSelection() {
@@ -3728,10 +2514,21 @@ Current Year: $currentYear''';
     );
   }
 
-  // =========================================================
-  // MOBILE GEMINI CHAT — unchanged from original
-  // =========================================================
-  Widget _buildMobileGeminiAPIChat() {
+  // NEW: On web, chat content gets stretched edge-to-edge on wide screens
+  // which is hard to read. This centers the chat column and caps its width
+  // like DeepSeek/ChatGPT/Claude web UIs do. Mobile is untouched because
+  // this returns the child unchanged when kIsWeb is false.
+  Widget _webCentered(Widget child) {
+    if (!kIsWeb) return child;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildGeminiAPIChat() {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -3981,214 +2778,142 @@ Current Year: $currentYear''';
         },
         child: Stack(
           children: [
-            Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 6,
-                    horizontal: 12,
-                  ),
-                  color: Colors.grey.shade900,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withAlpha(20),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange, width: 1),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.model_training,
-                              size: 12,
-                              color: Colors.blueAccent,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _availableModels
-                                  .firstWhere((m) => m.id == _selectedModel)
-                                  .name,
-                              style: const TextStyle(
-                                color: Colors.orange,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _enableThinking = !_enableThinking;
-                          });
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                _enableThinking
-                                    ? '🤔 Thinking mode ON'
-                                    : '⚡ Fast mode ON',
-                              ),
-                              backgroundColor:
-                                  _enableThinking
-                                      ? Colors.blueGrey
-                                      : Colors.blue,
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                        child: Container(
+            _webCentered(
+              Column(
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 6,
+                      horizontal: 12,
+                    ),
+                    color: Colors.grey.shade900,
+                    child: Row(
+                      children: [
+                        Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
+                            horizontal: 8,
+                            vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color:
-                                _enableThinking
-                                    ? Colors.brown.withAlpha(20)
-                                    : Colors.blue.withAlpha(20),
+                            color: Colors.blue.withAlpha(20),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color:
-                                  _enableThinking
-                                      ? Colors.lightBlue
-                                      : Colors.blue,
-                              width: 1,
-                            ),
+                            border: Border.all(color: Colors.orange, width: 1),
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                _enableThinking
-                                    ? Icons.psychology
-                                    : Icons.flash_on,
-                                size: 10,
-                                color:
-                                    _enableThinking
-                                        ? Colors.deepOrangeAccent
-                                        : Colors.blue,
+                              const Icon(
+                                Icons.model_training,
+                                size: 12,
+                                color: Colors.blueAccent,
                               ),
-                              const SizedBox(width: 3),
+                              const SizedBox(width: 4),
                               Text(
-                                _enableThinking ? 'Thinking' : 'Fast',
-                                style: TextStyle(
-                                  color:
-                                      _enableThinking
-                                          ? Colors.deepOrange
-                                          : Colors.blue,
-                                  fontSize: 10,
+                                _availableModels
+                                    .firstWhere((m) => m.id == _selectedModel)
+                                    .name,
+                                style: const TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
+                        const SizedBox(width: 6),
 
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withAlpha(20),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.blue, width: 1),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.thermostat,
-                              size: 10,
-                              color: Colors.blue,
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _enableThinking = !_enableThinking;
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  _enableThinking
+                                      ? '🤔 Thinking mode ON - Thoughts hidden in dropdown'
+                                      : '⚡ Fast mode ON - All text shown directly',
+                                ),
+                                backgroundColor:
+                                    _enableThinking
+                                        ? Colors.blueGrey
+                                        : Colors.blue,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
                             ),
-                            const SizedBox(width: 3),
-                            Text(
-                              'Temp: ${_temperature.toStringAsFixed(1)}',
-                              style: const TextStyle(
-                                color: Colors.blue,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
+                            decoration: BoxDecoration(
+                              color:
+                                  _enableThinking
+                                      ? Colors.brown.withAlpha(20)
+                                      : Colors.blue.withAlpha(20),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color:
+                                    _enableThinking
+                                        ? Colors.lightBlue
+                                        : Colors.blue,
+                                width: 1,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withAlpha(20),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.green, width: 1),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.memory,
-                              size: 10,
-                              color: Colors.green,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _enableThinking
+                                      ? Icons.psychology
+                                      : Icons.flash_on,
+                                  size: 10,
+                                  color:
+                                      _enableThinking
+                                          ? Colors.deepOrangeAccent
+                                          : Colors.blue,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  _enableThinking ? 'Thinking' : 'Fast',
+                                  style: TextStyle(
+                                    color:
+                                        _enableThinking
+                                            ? Colors.deepOrange
+                                            : Colors.blue,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 3),
-                            Text(
-                              'Ctx: $_maxContextMessages',
-                              style: const TextStyle(
-                                color: Colors.green,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 6),
 
-                      const Spacer(),
-
-                      if (_enableStreaming)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 6,
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color:
-                                _isStreaming
-                                    ? Colors.green.withAlpha(20)
-                                    : Colors.grey.withAlpha(20),
+                            color: Colors.blue.withAlpha(20),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: _isStreaming ? Colors.green : Colors.grey,
-                            ),
+                            border: Border.all(color: Colors.blue, width: 1),
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                _isStreaming
-                                    ? Icons.stream
-                                    : Icons.check_circle,
+                              const Icon(
+                                Icons.thermostat,
                                 size: 10,
-                                color:
-                                    _isStreaming ? Colors.green : Colors.grey,
+                                color: Colors.blue,
                               ),
                               const SizedBox(width: 3),
                               Text(
-                                _isStreaming ? 'Streaming' : 'Ready',
-                                style: TextStyle(
-                                  color:
-                                      _isStreaming ? Colors.green : Colors.grey,
+                                'Temp: ${_temperature.toStringAsFixed(1)}',
+                                style: const TextStyle(
+                                  color: Colors.blue,
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -4196,394 +2921,480 @@ Current Year: $currentYear''';
                             ],
                           ),
                         ),
-                    ],
-                  ),
-                ),
 
-                Expanded(
-                  child:
-                      _messages.isEmpty && _currentStreamText.isEmpty
-                          ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.auto_awesome,
-                                  size: 64,
-                                  color: Colors.orange,
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withAlpha(20),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.green, width: 1),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.memory,
+                                size: 10,
+                                color: Colors.green,
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                'Ctx: $_maxContextMessages',
+                                style: const TextStyle(
+                                  color: Colors.green,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                const SizedBox(height: 16),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const Spacer(),
+
+                        if (_enableStreaming)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color:
+                                  _isStreaming
+                                      ? Colors.green.withAlpha(20)
+                                      : Colors.grey.withAlpha(20),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color:
+                                    _isStreaming ? Colors.green : Colors.grey,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _isStreaming
+                                      ? Icons.stream
+                                      : Icons.check_circle,
+                                  size: 10,
+                                  color:
+                                      _isStreaming ? Colors.green : Colors.grey,
+                                ),
+                                const SizedBox(width: 3),
                                 Text(
-                                  'Welcome to ${_availableModels.firstWhere((m) => m.id == _selectedModel).name}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 20,
+                                  _isStreaming ? 'Streaming' : 'Ready',
+                                  style: TextStyle(
+                                    color:
+                                        _isStreaming
+                                            ? Colors.green
+                                            : Colors.grey,
+                                    fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
-                                  style: const TextStyle(
-                                    color: Colors.green,
-                                    fontSize: 12,
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  Expanded(
+                    child:
+                        _messages.isEmpty && _currentStreamText.isEmpty
+                            ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.auto_awesome,
+                                    size: 64,
+                                    color: Colors.orange,
                                   ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: Enabled',
-                                  style: const TextStyle(
-                                    color: Colors.blue,
-                                    fontSize: 12,
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Welcome to ${_availableModels.firstWhere((m) => m.id == _selectedModel).name}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 16),
-                                if (_userProfileBox.values.isEmpty)
-                                  GestureDetector(
-                                    onTap: _showProfileDialog,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green.withAlpha(30),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(color: Colors.green),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.person_add,
-                                            color: Colors.green,
-                                            size: 16,
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: Enabled',
+                                    style: const TextStyle(
+                                      color: Colors.blue,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  if (_userProfileBox.values.isEmpty)
+                                    GestureDetector(
+                                      onTap: _showProfileDialog,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withAlpha(30),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
                                           ),
-                                          SizedBox(width: 8),
-                                          Text(
-                                            'Set up your profile',
-                                            style: TextStyle(
+                                          border: Border.all(
+                                            color: Colors.green,
+                                          ),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.person_add,
                                               color: Colors.green,
-                                              fontSize: 12,
+                                              size: 16,
                                             ),
+                                            SizedBox(width: 8),
+                                            Text(
+                                              'Set up your profile',
+                                              style: TextStyle(
+                                                color: Colors.green,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            SizedBox(width: 8),
+                                            Icon(
+                                              Icons.arrow_forward,
+                                              color: Colors.green,
+                                              size: 12,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            )
+                            : ListView.builder(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.only(
+                                top: 4,
+                                bottom: 100,
+                                left: 2,
+                                right: 2,
+                              ),
+                              itemCount:
+                                  _messages.length +
+                                  (_currentStreamText.isNotEmpty ||
+                                          _isThinkingPhase
+                                      ? 1
+                                      : 0),
+                              itemBuilder: (context, index) {
+                                if (index < _messages.length) {
+                                  return ChatBubbleWithThinking(
+                                    message: _messages[index],
+                                    enableAutoScroll: _enableAutoScroll,
+                                    onContinuePressed:
+                                        _messages[index].isIncomplete
+                                            ? _continueIncompleteResponse
+                                            : null,
+                                    onRetryPressed:
+                                        _messages[index].canRetry
+                                            ? _retryFailedRequest
+                                            : null,
+                                  );
+                                } else {
+                                  if (_isThinkingPhase && _enableThinking) {
+                                    return Container(
+                                      margin: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                        horizontal: 4,
+                                      ),
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: Colors.cyan.withAlpha(20),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.cyanAccent,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Icon(
+                                            Icons.psychology,
+                                            color: Colors.blueAccent,
+                                            size: 20,
                                           ),
-                                          SizedBox(width: 8),
-                                          Icon(
-                                            Icons.arrow_forward,
-                                            color: Colors.green,
-                                            size: 12,
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                const Text(
+                                                  'Thinking Process',
+                                                  style: TextStyle(
+                                                    color: Colors.cyanAccent,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                if (_currentThinkingProcess
+                                                    .isNotEmpty)
+                                                  Container(
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                          10,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.black,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            8,
+                                                          ),
+                                                    ),
+                                                    child: Text(
+                                                      _currentThinkingProcess,
+                                                      style: const TextStyle(
+                                                        color:
+                                                            Colors
+                                                                .lightGreenAccent,
+                                                        fontSize: 13,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
                                           ),
                                         ],
                                       ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          )
-                          : ListView.builder(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.only(
-                              top: 4,
-                              bottom: 100,
-                              left: 2,
-                              right: 2,
-                            ),
-                            itemCount:
-                                _messages.length +
-                                (_currentStreamText.isNotEmpty ||
-                                        _isThinkingPhase
-                                    ? 1
-                                    : 0),
-                            itemBuilder: (context, index) {
-                              if (index < _messages.length) {
-                                return ChatBubbleWithThinking(
-                                  message: _messages[index],
-                                  enableAutoScroll: _enableAutoScroll,
-                                  onContinuePressed:
-                                      _messages[index].isIncomplete
-                                          ? _continueIncompleteResponse
-                                          : null,
-                                  onRetryPressed:
-                                      _messages[index].canRetry
-                                          ? _retryFailedRequest
-                                          : null,
-                                );
-                              } else {
-                                if (_isThinkingPhase && _enableThinking) {
-                                  return Container(
-                                    margin: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                      horizontal: 4,
-                                    ),
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: Colors.cyan.withAlpha(20),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: Colors.cyanAccent,
-                                        width: 1,
+                                    );
+                                  } else {
+                                    return ChatBubbleWithThinking(
+                                      message: ChatMessage(
+                                        text: _currentStreamText,
+                                        isUser: false,
+                                        timestamp: DateTime.now(),
+                                        isLoading: _isStreaming,
                                       ),
-                                    ),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Icon(
-                                          Icons.psychology,
-                                          color: Colors.blueAccent,
-                                          size: 20,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              const Text(
-                                                'Thinking Process',
-                                                style: TextStyle(
-                                                  color: Colors.cyanAccent,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              if (_currentThinkingProcess
-                                                  .isNotEmpty)
-                                                Container(
-                                                  padding: const EdgeInsets.all(
-                                                    10,
-                                                  ),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.black,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          8,
-                                                        ),
-                                                  ),
-                                                  child: Text(
-                                                    _currentThinkingProcess,
-                                                    style: const TextStyle(
-                                                      color:
-                                                          Colors
-                                                              .lightGreenAccent,
-                                                      fontSize: 13,
-                                                    ),
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                } else {
-                                  return ChatBubbleWithThinking(
-                                    message: ChatMessage(
-                                      text: _currentStreamText,
-                                      isUser: false,
-                                      timestamp: DateTime.now(),
-                                      isLoading: _isStreaming,
-                                    ),
-                                    enableAutoScroll: _enableAutoScroll,
-                                    onContinuePressed: null,
-                                    onRetryPressed: null,
-                                  );
-                                }
-                              }
-                            },
-                          ),
-                ),
-                _buildBannerAd(),
-                if (_selectedImages.isNotEmpty)
-                  Container(
-                    height: 80,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    color: Colors.grey.shade900,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _selectedImages.length,
-                      itemBuilder: (context, index) {
-                        return Stack(
-                          children: [
-                            Container(
-                              width: 70,
-                              height: 70,
-                              margin: const EdgeInsets.only(right: 6),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(6),
-                                image: DecorationImage(
-                                  image: MemoryImage(_selectedImages[index]),
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              top: 0,
-                              right: 0,
-                              child: GestureDetector(
-                                onTap: () => _removeImage(index),
-                                child: Container(
-                                  padding: const EdgeInsets.all(2),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.red,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.close,
-                                    size: 12,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  color: Colors.grey.shade900,
-                  child: Column(
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (_enableImageUpload)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: IconButton(
-                                icon: Icon(
-                                  Icons.image,
-                                  color:
-                                      _selectedImages.isNotEmpty
-                                          ? Colors.orange
-                                          : Colors.white,
-                                  size: 20,
-                                ),
-                                onPressed: () async {
-                                  await _pickImage();
-                                  if (_inputFocusNode?.hasFocus == false) {
-                                    _inputFocusNode?.requestFocus();
+                                      enableAutoScroll: _enableAutoScroll,
+                                      onContinuePressed: null,
+                                      onRetryPressed: null,
+                                    );
                                   }
-                                },
-                              ),
-                            ),
-
-                          Expanded(
-                            child: Container(
-                              constraints: const BoxConstraints(maxHeight: 140),
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade800,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: TextField(
-                                controller: _messageController,
-                                focusNode: _inputFocusNode,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                ),
-                                maxLines: null,
-                                keyboardType: TextInputType.multiline,
-                                textInputAction: TextInputAction.newline,
-                                decoration: InputDecoration(
-                                  hintText: 'Type your message...',
-                                  hintStyle: const TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 14,
-                                  ),
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 10,
-                                  ),
-                                  suffixIcon:
-                                      _isStreaming
-                                          ? IconButton(
-                                            icon: const Icon(
-                                              Icons.stop,
-                                              color: Colors.red,
-                                              size: 18,
-                                            ),
-                                            onPressed: () async {
-                                              await _cancelCurrentStream();
-                                              if (mounted) {
-                                                setState(() {
-                                                  _isSendingMessage = false;
-                                                  _isStreaming = false;
-                                                  _currentStreamText = '';
-                                                  _currentThinkingProcess = '';
-                                                  _isThinkingComplete = false;
-                                                  _isThinkingPhase = false;
-                                                });
-                                              }
-                                              if (_inputFocusNode?.hasFocus ==
-                                                  false) {
-                                                _inputFocusNode?.requestFocus();
-                                              }
-                                            },
-                                          )
-                                          : null,
-                                ),
-                                onChanged: (value) {},
-                                onSubmitted: (_) {
-                                  if (!_isSendingMessage) {
-                                    _sendGeminiMessage();
-                                  }
-                                },
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(width: 6),
-
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 6),
-                            decoration: BoxDecoration(
-                              color:
-                                  _isSendingMessage
-                                      ? Colors.grey.shade700
-                                      : Colors.lightBlue,
-                              shape: BoxShape.circle,
-                            ),
-                            child: IconButton(
-                              icon:
-                                  _isSendingMessage
-                                      ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor:
-                                              AlwaysStoppedAnimation<Color>(
-                                                Colors.white,
-                                              ),
-                                        ),
-                                      )
-                                      : const Icon(
-                                        Icons.send,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                              onPressed: () async {
-                                if (!_isSendingMessage) {
-                                  await _sendGeminiMessage();
                                 }
                               },
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ),
-                ),
-              ],
+                  _buildBannerAd(),
+                  if (_selectedImages.isNotEmpty)
+                    Container(
+                      height: 80,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      color: Colors.grey.shade900,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _selectedImages.length,
+                        itemBuilder: (context, index) {
+                          return Stack(
+                            children: [
+                              Container(
+                                width: 70,
+                                height: 70,
+                                margin: const EdgeInsets.only(right: 6),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(6),
+                                  image: DecorationImage(
+                                    image: MemoryImage(_selectedImages[index]),
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 0,
+                                right: 0,
+                                child: GestureDetector(
+                                  onTap: () => _removeImage(index),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.close,
+                                      size: 12,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+
+                  Container(
+                    padding: const EdgeInsets.all(7),
+                    color: Colors.grey.shade900,
+                    child: Column(
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (_enableImageUpload)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: IconButton(
+                                  icon: Icon(
+                                    Icons.image,
+                                    color:
+                                        _selectedImages.isNotEmpty
+                                            ? Colors.orange
+                                            : Colors.white,
+                                    size: 20,
+                                  ),
+                                  onPressed: () async {
+                                    await _pickImage();
+                                    if (_inputFocusNode?.hasFocus == false) {
+                                      _inputFocusNode?.requestFocus();
+                                    }
+                                  },
+                                ),
+                              ),
+
+                            Expanded(
+                              child: Container(
+                                constraints: const BoxConstraints(
+                                  maxHeight: 140,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade800,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: TextField(
+                                  controller: _messageController,
+                                  focusNode: _inputFocusNode,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                  ),
+                                  maxLines: null, // NO MAX LINES - unlimited
+                                  keyboardType: TextInputType.multiline,
+                                  textInputAction: TextInputAction.newline,
+                                  decoration: InputDecoration(
+                                    hintText: 'Type your message...',
+                                    hintStyle: const TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 14,
+                                    ),
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    suffixIcon:
+                                        _isStreaming
+                                            ? IconButton(
+                                              icon: const Icon(
+                                                Icons.stop,
+                                                color: Colors.red,
+                                                size: 18,
+                                              ),
+                                              onPressed: () async {
+                                                await _cancelCurrentStream();
+                                                if (mounted) {
+                                                  setState(() {
+                                                    _isSendingMessage = false;
+                                                    _isStreaming = false;
+                                                    _currentStreamText = '';
+                                                    _currentThinkingProcess =
+                                                        '';
+                                                    _isThinkingComplete = false;
+                                                    _isThinkingPhase = false;
+                                                  });
+                                                }
+                                                if (_inputFocusNode?.hasFocus ==
+                                                    false) {
+                                                  _inputFocusNode
+                                                      ?.requestFocus();
+                                                }
+                                              },
+                                            )
+                                            : null,
+                                  ),
+                                  onChanged: (value) {},
+                                  onSubmitted: (_) {
+                                    if (!_isSendingMessage) {
+                                      _sendGeminiMessage();
+                                    }
+                                  },
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(width: 6),
+
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              decoration: BoxDecoration(
+                                color:
+                                    _isSendingMessage
+                                        ? Colors.grey.shade700
+                                        : Colors.lightBlue,
+                                shape: BoxShape.circle,
+                              ),
+                              child: IconButton(
+                                icon:
+                                    _isSendingMessage
+                                        ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Colors.white,
+                                                ),
+                                          ),
+                                        )
+                                        : const Icon(
+                                          Icons.send,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                onPressed: () async {
+                                  if (!_isSendingMessage) {
+                                    await _sendGeminiMessage();
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
 
             _buildScrollToBottomButton(),
@@ -4591,48 +3402,6 @@ Current Year: $currentYear''';
         ),
       ),
     );
-  }
-
-  // =========================================================
-  // BUILD: routes to web layout or mobile layout
-  // =========================================================
-  Widget _buildGeminiAPIChat() {
-    if (kIsWeb) {
-      // ── WEB LAYOUT: Sidebar + centered chat ──────────────
-      return Scaffold(
-        backgroundColor: const Color(0xFF0D0D0D),
-        body: Row(
-          children: [
-            // Left sidebar
-            _buildWebSidebar(),
-
-            // Sidebar border
-            if (_webSidebarOpen)
-              Container(width: 1, color: Colors.grey.shade800),
-
-            // Main chat area
-            Expanded(
-              child: Column(
-                children: [
-                  _buildWebTopBar(),
-                  Expanded(
-                    child: Stack(
-                      children: [
-                        _buildWebChatBody(),
-                        _buildScrollToBottomButton(),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // ── MOBILE LAYOUT: unchanged original ─────────────────
-    return _buildMobileGeminiAPIChat();
   }
 
   Widget _buildWebView() {
@@ -4737,6 +3506,7 @@ class ChatMessage {
   });
 }
 
+// COMPLETELY REWRITTEN CODE BLOCK LOGIC - NO MORE BUGS!
 class _CodeBlock {
   final String language;
   final String code;
@@ -4892,6 +3662,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
+  // COMPLETELY NEW CODE BLOCK EXTRACTION - NO DUPLICATION BUG
   List<_CodeBlock> _extractCodeBlocks(String text) {
     final List<_CodeBlock> blocks = [];
     final regex = RegExp(r'```(\w*)\s*\n?([\s\S]*?)```', multiLine: true);
@@ -4901,6 +3672,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       final code = (match.group(2) ?? '').trim();
 
       if (code.isNotEmpty) {
+        // Check for duplicate code blocks
         final isDuplicate = blocks.any(
           (b) => b.code == code && b.language == language,
         );
@@ -4918,6 +3690,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     return blocks;
   }
 
+  // NEW: Build code block with language label and copy button
   Widget _buildCodeBlock(_CodeBlock block, int index) {
     return Container(
       width: double.infinity,
@@ -5017,6 +3790,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
+  // NEW: Parse text with code blocks - NO DUPLICATION
   Widget _buildParsedText(String text) {
     final codeBlocks = _extractCodeBlocks(text);
 
@@ -5024,15 +3798,12 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       return SelectionArea(
         child: Text(
           text,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            height: 1.6,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 14),
         ),
       );
     }
 
+    // Split text by code blocks
     String remainingText = text;
     final List<Widget> widgets = [];
 
@@ -5048,11 +3819,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
             child: SelectionArea(
               child: Text(
                 parts[0].trim(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  height: 1.6,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
               ),
             ),
           ),
@@ -5075,11 +3842,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
           child: SelectionArea(
             child: Text(
               remainingText.trim(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                height: 1.6,
-              ),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
             ),
           ),
         ),
@@ -5134,6 +3897,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     }
   }
 
+  // FIX: Copy entire message including code blocks
   void _copyFullMessage() {
     Clipboard.setData(ClipboardData(text: widget.message.text));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -5197,6 +3961,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
+  // NEW: Action buttons at bottom of AI responses
   Widget _buildActionButtons() {
     if (widget.message.isUser || widget.message.isLoading) {
       return const SizedBox.shrink();
@@ -5206,6 +3971,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       margin: const EdgeInsets.only(top: 12),
       child: Row(
         children: [
+          // Copy button
           InkWell(
             onTap: _copyFullMessage,
             child: Container(
@@ -5231,6 +3997,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
 
           const SizedBox(width: 8),
 
+          // Regenerate button (using retry logic)
           if (widget.onRetryPressed != null)
             InkWell(
               onTap: widget.onRetryPressed,
@@ -5269,175 +4036,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   Widget build(BuildContext context) {
     final message = widget.message;
 
-    // ===== WEB: DeepSeek-style aligned bubbles =====
-    if (kIsWeb) {
-      if (message.isUser) {
-        // User message — right aligned, constrained width
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 560),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (message.images != null && message.images!.isNotEmpty)
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          alignment: WrapAlignment.end,
-                          children:
-                              message.images!.asMap().entries.map((e) {
-                                return _buildImagePreview(e.value, e.key);
-                              }).toList(),
-                        ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E3A5F),
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(18),
-                            topRight: Radius.circular(4),
-                            bottomLeft: Radius.circular(18),
-                            bottomRight: Radius.circular(18),
-                          ),
-                          border: Border.all(
-                            color: Colors.blue.withAlpha(60),
-                            width: 1,
-                          ),
-                        ),
-                        child: _buildMessageContent(message),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4, right: 4),
-                        child: Text(
-                          DateFormat('HH:mm').format(message.timestamp),
-                          style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // User avatar
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: Colors.blue.withAlpha(40),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.blue.withAlpha(80),
-                    width: 1,
-                  ),
-                ),
-                child: const Icon(Icons.person, color: Colors.blue, size: 18),
-              ),
-            ],
-          ),
-        );
-      } else {
-        // AI message — left aligned, wider readable width
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // AI avatar
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: Colors.orange.withAlpha(30),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.orange.withAlpha(80),
-                    width: 1,
-                  ),
-                ),
-                child: const Icon(
-                  Icons.auto_awesome,
-                  color: Colors.orange,
-                  size: 16,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 680),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (message.thinkingProcess != null &&
-                          message.thinkingProcess!.isNotEmpty)
-                        _buildThinkingSection(),
-
-                      if (message.isError)
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withAlpha(15),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: Colors.red.withAlpha(60),
-                              width: 1,
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildMessageContent(message),
-                              if (widget.onRetryPressed != null &&
-                                  message.canRetry)
-                                _buildRetryButton(),
-                            ],
-                          ),
-                        )
-                      else
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildMessageContent(message),
-                            if (message.isIncomplete &&
-                                widget.onContinuePressed != null)
-                              _buildContinueButton(),
-                            if (!message.isError) _buildActionButtons(),
-                          ],
-                        ),
-
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          DateFormat('HH:mm').format(message.timestamp),
-                          style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }
-    }
-
-    // ===== MOBILE: original layout unchanged =====
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -5521,6 +4119,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                         widget.onContinuePressed != null)
                       _buildContinueButton(),
 
+                    // NEW: Action buttons
                     if (!message.isError) _buildActionButtons(),
                   ],
                 ),
