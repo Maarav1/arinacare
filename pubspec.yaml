@@ -91,7 +91,7 @@ dependencies:
   connectivity_plus: ^7.0.0
   web_socket: ^1.0.0
   web_socket_channel: ^3.0.3
-  web: ^1.1.0
+  web: 1.1.1
   
   # ===== WEBVIEW =====
   webview_flutter: 4.13.0
