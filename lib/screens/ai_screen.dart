@@ -8,7 +8,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
-import 'package:webview_flutter_web/webview_flutter_web.dart';
+//import 'package:webview_flutter_web/webview_flutter_web.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
@@ -2264,10 +2264,8 @@ Current Year: $currentYear''';
 
   void _initializeWebView() {
     // ===== WEB COMPATIBILITY =====
-    if (kIsWeb) {
-      // Use web implementation
-      WebViewPlatform.instance = WebWebViewPlatform();
-    }
+    // webview_flutter now handles web automatically
+    // No need to set WebViewPlatform.instance on web anymore
 
     // Now create the controller with the appropriate platform
     late final PlatformWebViewControllerCreationParams params;
@@ -2297,9 +2295,6 @@ Current Year: $currentYear''';
     }
 
     // ===== NAVIGATION DELEGATE (MOBILE ONLY) =====
-    // webview_flutter_web does not implement createPlatformNavigationDelegate.
-    // Calling setNavigationDelegate on web throws UnimplementedError and
-    // crashes the entire screen. Guard it strictly behind !kIsWeb.
     if (!kIsWeb) {
       controller.setNavigationDelegate(
         NavigationDelegate(

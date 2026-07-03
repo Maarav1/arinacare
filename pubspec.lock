@@ -31,7 +31,7 @@ packages:
     source: hosted
     version: "1.0.0"
   analyzer:
-    dependency: "direct overridden"
+    dependency: "direct main"
     description:
       name: analyzer
       sha256: "1f14db053a8c23e260789e9b0980fa27f2680dd640932cae5e1137cce0e46e1e"
@@ -39,7 +39,7 @@ packages:
     source: hosted
     version: "6.11.0"
   ansicolor:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: ansicolor
       sha256: "50e982d500bc863e1d703448afdbf9e5a72eb48840a4f766fa361ffd6877055f"
@@ -78,8 +78,16 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.4"
+  applovin_max:
+    dependency: "direct main"
+    description:
+      name: applovin_max
+      sha256: d179b33535589ce72dbc30c1fd0a3f0d249f5d1d547645b7837f8456c6a1df93
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.6.4"
   archive:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: archive
       sha256: cb6a278ef2dbb298455e1a713bda08524a175630ec643a242c399c932a0a1f7d
@@ -95,7 +103,7 @@ packages:
     source: hosted
     version: "2.7.0"
   async:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: async
       sha256: d2872f9c19731c2e5f10444b14686eb7cc85c76274bd6c16e1816bff9a3bab63
@@ -191,7 +199,7 @@ packages:
     source: hosted
     version: "2.5.4"
   build_config:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: build_config
       sha256: "4ae2de3e1e67ea270081eaee972e1bd8f027d459f249e0f1186730784c2e7e33"
@@ -199,7 +207,7 @@ packages:
     source: hosted
     version: "1.1.2"
   build_daemon:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: build_daemon
       sha256: bf05f6e12cfea92d3c09308d7bcdab1906cd8a179b023269eed00c071004b957
@@ -207,7 +215,7 @@ packages:
     source: hosted
     version: "4.1.1"
   build_resolvers:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: build_resolvers
       sha256: ee4257b3f20c0c90e72ed2b57ad637f694ccba48839a821e87db762548c22a62
@@ -223,7 +231,7 @@ packages:
     source: hosted
     version: "2.5.4"
   build_runner_core:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: build_runner_core
       sha256: "85fbbb1036d576d966332a3f5ce83f2ce66a40bea1a94ad2d5fc29a19a0d3792"
@@ -303,7 +311,7 @@ packages:
     source: hosted
     version: "1.4.0"
   checked_yaml:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: checked_yaml
       sha256: feb6bed21949061731a7a75fc5d2aa727cf160b91af9a3e464c5e3a32e28b5ff
@@ -647,7 +655,7 @@ packages:
     source: hosted
     version: "2.0.7"
   fake_async:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: fake_async
       sha256: "6a95e56b2449df2273fd8c45a662d6947ce1ebb7aafe80e550a3f68297f3cacc"
@@ -1126,7 +1134,7 @@ packages:
     source: hosted
     version: "3.1.0"
   frontend_server_client:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: frontend_server_client
       sha256: f64a0333a82f30b0cca061bc3d143813a486dc086b574bfb233b7c1372427694
@@ -1366,7 +1374,7 @@ packages:
     source: hosted
     version: "2.18.0"
   graphs:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: graphs
       sha256: "741bbf84165310a68ff28fe9e727332eef1407342fca52759cb21ad8177bb8d0"
@@ -1446,7 +1454,7 @@ packages:
     source: hosted
     version: "2.3.1"
   http_multi_server:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: http_multi_server
       sha256: aa6199f908078bb1c5efb8d8638d4ae191aac11b311132c3ef48ce352fb52ef8
@@ -1630,7 +1638,7 @@ packages:
     source: hosted
     version: "0.20.2"
   io:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: io
       sha256: dfd5a80599cf0165756e3181807ed3e77daf6dd4137caaad72d0b7931597650b
@@ -1638,7 +1646,7 @@ packages:
     source: hosted
     version: "1.0.5"
   js:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: js
       sha256: f2c445dce49627136094980615a031419f7f3eb393237e4ecd97ac15dea343f3
@@ -1702,7 +1710,7 @@ packages:
     source: hosted
     version: "0.9.1"
   leak_tracker:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: leak_tracker
       sha256: c35baad643ba394b40aac41080300150a4f08fd0fd6a10378f8f7c6bc161acec
@@ -1710,7 +1718,7 @@ packages:
     source: hosted
     version: "10.0.8"
   leak_tracker_flutter_testing:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: leak_tracker_flutter_testing
       sha256: f8b613e7e6a13ec79cfdc0e97638fddb3ab848452eff057653abd3edba760573
@@ -1718,7 +1726,7 @@ packages:
     source: hosted
     version: "3.0.9"
   leak_tracker_testing:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: leak_tracker_testing
       sha256: "6ba465d5d76e67ddf503e1161d1f4a6bc42306f9d66ca1e8f079a47290fb06d3"
@@ -1790,7 +1798,7 @@ packages:
     source: hosted
     version: "0.12.17"
   material_color_utilities:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: material_color_utilities
       sha256: f7142bb1154231d7ea5f96bc7bde4bda2a0945d2806bb11670e30b850d56bdec
@@ -1822,7 +1830,7 @@ packages:
     source: hosted
     version: "2.0.0"
   mockito:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: mockito
       sha256: f99d8d072e249f719a5531735d146d8cf04c580d93920b04de75bef6dfb2daf6
@@ -2030,7 +2038,7 @@ packages:
     source: hosted
     version: "4.0.0"
   pool:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: pool
       sha256: "978783255c543aa3586a1b3c21f6e9d720eb315376a915872c61ef8b5c20177d"
@@ -2078,7 +2086,7 @@ packages:
     source: hosted
     version: "2.2.0"
   pubspec_parse:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: pubspec_parse
       sha256: "0560ba233314abbed0a48a2956f7f022cce7c3e1e73df540277da7544cad4082"
@@ -2254,7 +2262,7 @@ packages:
     source: hosted
     version: "2.4.1"
   shelf:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: shelf
       sha256: e7dd780a7ffb623c57850b33f43309312fc863fb6aa3d276a754bb299839ef12
@@ -2278,7 +2286,7 @@ packages:
     source: hosted
     version: "1.1.3"
   shelf_web_socket:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: shelf_web_socket
       sha256: "3632775c8e90d6c9712f883e633716432a27758216dfb61bd86a8321c0580925"
@@ -2563,7 +2571,7 @@ packages:
     source: hosted
     version: "0.10.1"
   timing:
-    dependency: "direct dev"
+    dependency: "direct main"
     description:
       name: timing
       sha256: "62ee18aca144e4a9f29d212f5a4c6a053be252b895ab14b5821996cff4ed90fe"
@@ -2595,21 +2603,13 @@ packages:
     source: hosted
     version: "1.0.0"
   unicode:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: unicode
       sha256: "0f69e46593d65245774d4f17125c6084d2c20b4e473a983f6e21b7d7762218f1"
       url: "https://pub.dev"
     source: hosted
     version: "0.3.1"
-  universal_html:
-    dependency: "direct main"
-    description:
-      name: universal_html
-      sha256: c0bcae5c733c60f26c7dfc88b10b0fd27cbcc45cb7492311cdaa6067e21c9cd4
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.3.0"
   universal_io:
     dependency: transitive
     description:
@@ -2699,7 +2699,7 @@ packages:
     source: hosted
     version: "4.5.2"
   vector_math:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: vector_math
       sha256: "80b3257d1492ce4d091729e3a67a60407d227c27241d6927be0130c98e741803"
@@ -2763,7 +2763,7 @@ packages:
     source: hosted
     version: "2.4.0"
   vm_service:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: vm_service
       sha256: "0968250880a6c5fe7edc067ed0a13d4bae1577fe2771dcf3010d52c4a9d3ca14"
@@ -2787,7 +2787,7 @@ packages:
     source: hosted
     version: "1.2.0"
   web:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: web
       sha256: "868d88a33d8a87b18ffc05f9f030ba328ffefba92d6c127917a2ba740f9cfe4a"
@@ -2842,14 +2842,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.14.0"
-  webview_flutter_web:
-    dependency: "direct main"
-    description:
-      name: webview_flutter_web
-      sha256: "18a7ccc1c31dd9a5c759a1b7217a2a1e04bd8f65712714a4070bfac19a23ca9e"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.2.3+4"
   webview_flutter_wkwebview:
     dependency: "direct main"
     description:

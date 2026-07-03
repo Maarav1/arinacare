@@ -236,35 +236,7 @@ class _RadioScreenState extends State<RadioScreen> {
         color: Colors.lightBlue,
         bitrate: '48 kbps',
       ),
-      RadioStation(
-        id: 'dw_english',
-        name: 'DW English',
-        description: 'Deutsche Welle - German international broadcaster',
-        streamUrl:
-            'https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8',
-        logoUrl:
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Deutsche_Welle_logo_2012.svg/1024px-Deutsche_Welle_logo_2012.svg.png',
-        language: 'English',
-        category: 'News',
-        country: 'Germany',
-        color: Colors.green,
-        bitrate: '640 kbps',
-      ),
 
-      RadioStation(
-        id: 'dw_english',
-        name: 'DW English',
-        description: 'Deutsche Welle - German international broadcaster',
-        streamUrl:
-            'https://www3.nhk.or.jp/nhkworld/en/live_radio/',
-        logoUrl:
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Deutsche_Welle_logo_2012.svg/1024px-Deutsche_Welle_logo_2012.svg.png',
-        language: 'English',
-        category: 'News',
-        country: 'Germany',
-        color: Colors.green,
-        bitrate: '64 kbps',
-      ),
 
       RadioStation(
         id: 'nhk_radio_japan',
@@ -280,6 +252,20 @@ class _RadioScreenState extends State<RadioScreen> {
         country: 'Japan',
         color: Colors.red,
         bitrate: '48 kbps',
+      ),
+      RadioStation(
+        id: 'dw_english',
+        name: 'DW English',
+        description: 'Deutsche Welle - German international broadcaster',
+        streamUrl:
+            'https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8',
+        logoUrl:
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Deutsche_Welle_logo_2012.svg/1024px-Deutsche_Welle_logo_2012.svg.png',
+        language: 'English',
+        category: 'News',
+        country: 'Germany',
+        color: Colors.green,
+        bitrate: '640 kbps',
       ),
     
     ]);
