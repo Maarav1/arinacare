@@ -208,10 +208,17 @@ class _AIScreenState extends State<AIScreen>
 
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
+    _scrollController.addListener(_updateScrollIndicator); 
     _messageController.addListener(_onMessageTextChanged);
   }
 
   void _onMessageTextChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _updateScrollIndicator() {
     if (mounted) {
       setState(() {});
     }
@@ -699,7 +706,7 @@ class _AIScreenState extends State<AIScreen>
   ) {
     final List<Map<String, dynamic>> contents = [];
 
-    final userProfiles = _userProfileBox.values.toList();
+    final userProfiles = _userProfileBox.values;
     final hasUserInfo = userProfiles.isNotEmpty;
     final userName = hasUserInfo ? userProfiles.first.name : '';
     final userInterests = hasUserInfo ? userProfiles.first.interests : '';
@@ -1939,6 +1946,139 @@ Current Year: $currentYear''';
             Icons.arrow_downward,
             color: Colors.white,
             size: 20,
+          ),
+        ),
+      ),
+    );
+  }
+
+    // ============================================================
+  // SCROLL PROGRESS INDICATOR - Shows position and message markers
+  // ============================================================
+  Widget _buildScrollProgressIndicator() {
+    if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
+      return const SizedBox.shrink();
+    }
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    if (maxScroll <= 0) return const SizedBox.shrink();
+
+    final currentScroll = _scrollController.offset;
+    final progress = (currentScroll / maxScroll).clamp(0.0, 1.0);
+
+    // Calculate available height (between top bar and input)
+    final screenHeight = MediaQuery.of(context).size.height;
+    final topBarHeight = 60.0;
+    final inputHeight = 80.0;
+    final availableHeight = screenHeight - topBarHeight - inputHeight - 120;
+
+    return Positioned(
+      right: 8,
+      top: topBarHeight + 20,
+      bottom: inputHeight + 40,
+      child: GestureDetector(
+        onTapDown: (details) {
+          final position = details.localPosition.dy / availableHeight;
+          final targetOffset = (position.clamp(0.0, 1.0)) * maxScroll;
+          _scrollController.animateTo(
+            targetOffset,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        },
+        onPanUpdate: (details) {
+          final position = (details.localPosition.dy / availableHeight).clamp(
+            0.0,
+            1.0,
+          );
+          final targetOffset = position * maxScroll;
+          _scrollController.jumpTo(targetOffset);
+        },
+        child: Container(
+          width: 6,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade800.withAlpha(80), 
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Stack(
+            children: [
+              // Progress fill
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: (progress * availableHeight).clamp(
+                  0.0,
+                  availableHeight,
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+              // Message markers (the "dashes")
+              ..._messages.asMap().entries.map((entry) {
+                final index = entry.key;
+                final position = (index / _messages.length) * availableHeight;
+                return Positioned(
+                  top: position - 1,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    height: 2,
+                    color: Colors.blue.withAlpha(80), 
+                  ),
+                );
+              }),
+              // Current position indicator (circle)
+              Positioned(
+                top: (progress * availableHeight) - 5,
+                left: -3,
+                right: -3,
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(80), 
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // Tooltip on hover - show message number
+              if (_messages.isNotEmpty)
+                Positioned(
+                  top: (progress * availableHeight) - 20,
+                  right: 16,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade900,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey.shade700),
+                    ),
+                    child: Text(
+                      '${(progress * 100).toInt()}%',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 9,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -3391,8 +3531,9 @@ Current Year: $currentYear''';
                 ],
               ),
             ),
-
+_buildBannerAd(),
             _buildScrollToBottomButton(),
+            _buildScrollProgressIndicator(), 
           ],
         ),
       ),
