@@ -54,6 +54,20 @@ class _AIScreenState extends State<AIScreen>
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _interestsController = TextEditingController();
 
+  // ===== NEW: Chat search state =====
+  // Backing controller and query text for the Chat Search screen. This
+  // powers the keyword filter over every saved conversation for the
+  // currently selected model, with highlighted matches in the results list.
+  final TextEditingController _chatSearchController = TextEditingController();
+  String _chatSearchQuery = '';
+
+  // ===== NEW: Force-new-conversation flag =====
+  // When the user explicitly taps "New Chat", this flag tells
+  // _saveConversation to create a brand-new ConversationHive record on the
+  // next save instead of appending to the most recently used conversation
+  // for this model, which is the default behavior everywhere else.
+  bool _forceNewConversation = false;
+
   // Streaming variables
   String _currentStreamText = '';
   StreamSubscription<String>? _streamSubscription;
@@ -186,6 +200,8 @@ class _AIScreenState extends State<AIScreen>
   bool _showScrollButton = false;
   bool _userScrolledUp = false;
 
+  Timer? _searchDebounce; 
+
   @override
   bool get wantKeepAlive => true;
 
@@ -208,7 +224,7 @@ class _AIScreenState extends State<AIScreen>
 
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
-    _scrollController.addListener(_updateScrollIndicator); 
+    _scrollController.addListener(_updateScrollIndicator);
     _messageController.addListener(_onMessageTextChanged);
   }
 
@@ -285,10 +301,12 @@ class _AIScreenState extends State<AIScreen>
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = null;
     _scrollController.removeListener(_onScroll);
+    _scrollController.removeListener(_updateScrollIndicator);
     _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     _nameController.dispose();
     _interestsController.dispose();
+    _chatSearchController.dispose();
     _inputFocusNode?.dispose();
     _scrollController.dispose();
 
@@ -1149,6 +1167,21 @@ Current Year: $currentYear''';
     return _ParsedResponse(thinkingProcess: '', finalResponse: fullResponse);
   }
 
+  // ===== NEW: Multi-step thinking phase label generator =====
+  // Rather than a single static "Thinking Process" caption, this maps how
+  // far along the accumulated thinking text is into a short human readable
+  // phase name. It is purely cosmetic and does not alter what gets sent to
+  // or received from Gemini — it only changes what caption is shown above
+  // the live thinking box while a response is still streaming in.
+  String _thinkingPhaseLabel(String thinkingTextSoFar) {
+    final length = thinkingTextSoFar.trim().length;
+    if (length == 0) return 'Reading your question';
+    if (length < 80) return 'Understanding context';
+    if (length < 220) return 'Working through the reasoning';
+    if (length < 420) return 'Checking details';
+    return 'Finalizing the answer';
+  }
+
   Future<void> _saveConversation() async {
     if (!_enableHistory || _messages.isEmpty) return;
 
@@ -1164,7 +1197,19 @@ Current Year: $currentYear''';
 
       ConversationHive currentConversation;
 
-      if (conversations.isNotEmpty) {
+      // ===== NEW: honor the force-new-conversation flag from "New Chat" =====
+      if (_forceNewConversation) {
+        final conversationId = DateTime.now().millisecondsSinceEpoch.toString();
+        currentConversation =
+            ConversationHive()
+              ..id = conversationId
+              ..lastMessageTimestamp = DateTime.now()
+              ..messageCount = _messages.length
+              ..modelUsed = _selectedModel;
+
+        await _conversationBox.add(currentConversation);
+        _forceNewConversation = false;
+      } else if (conversations.isNotEmpty) {
         currentConversation = conversations.first;
         currentConversation.lastMessageTimestamp = DateTime.now();
         currentConversation.messageCount = _messages.length;
@@ -1216,6 +1261,91 @@ Current Year: $currentYear''';
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error saving conversation for model $_selectedModel: $e');
+      }
+    }
+  }
+
+  // ===== NEW: Start a brand new chat =====
+  // Clears the current message list, resets streaming/thinking/error state,
+  // and sets the force-new-conversation flag so the very next save creates
+  // a fresh ConversationHive record rather than overwriting whatever
+  // conversation was previously active for this model.
+  Future<void> _startNewChat() async {
+    await _cancelCurrentStream();
+    await _saveConversation();
+
+    if (!mounted) return;
+
+    setState(() {
+      _messages.clear();
+      _currentStreamText = '';
+      _selectedImages.clear();
+      _currentThinkingProcess = '';
+      _isThinkingComplete = false;
+      _isThinkingPhase = false;
+      _lastIncompleteResponse = '';
+      _retryCount = 0;
+      _lastFailedPrompt = null;
+      _lastFailedImages = null;
+      _hasPartialResponse = false;
+      _partialResponseOnError = '';
+      _forceNewConversation = true;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Started a new chat'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ===== NEW: Load a specific saved conversation into view =====
+  // Used by the Chat Search screen when the user taps a search result.
+  // Pulls every ChatMessageHive row tied to that conversation id, converts
+  // each into a ChatMessage, and replaces the current in-memory list with
+  // them so the chat view reflects exactly that saved conversation.
+  Future<void> _loadSpecificConversation(String conversationId) async {
+    await _cancelCurrentStream();
+    await _saveConversation();
+
+    try {
+      final messages =
+          _chatBox.values
+              .where((msg) => msg.conversationId == conversationId)
+              .toList()
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      if (!mounted) return;
+
+      setState(() {
+        _messages.clear();
+        _messages.addAll(
+          messages.map(
+            (msg) => ChatMessage(
+              text: msg.text,
+              isUser: msg.isUser,
+              timestamp: msg.timestamp,
+              isLoading: false,
+              isError: msg.isError,
+              thinkingProcess: msg.thinkingProcess,
+              thinkingTime:
+                  msg.thinkingTimeMs != null
+                      ? Duration(milliseconds: msg.thinkingTimeMs!)
+                      : null,
+              images: msg.imageBytes,
+              isIncomplete: msg.isIncomplete ?? false,
+            ),
+          ),
+        );
+        _forceNewConversation = false;
+      });
+
+      _scheduleAutoScroll();
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Error loading specific conversation: $e');
       }
     }
   }
@@ -1612,7 +1742,7 @@ Current Year: $currentYear''';
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Settings',
+                        '⚙️ Settings',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 24,
@@ -1620,6 +1750,151 @@ Current Year: $currentYear''';
                         ),
                       ),
                       const SizedBox(height: 20),
+
+                      // ===== NEW: Model & Thinking section merged in from
+                      // the enhanced settings sheet you shared, giving quick
+                      // access to the current model and the thinking toggle
+                      // right at the top of the sheet =====
+                      _buildSettingsSection(
+                        title: '🎯 Model & Thinking',
+                        children: [
+                          ListTile(
+                            title: const Text(
+                              'Model',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              _availableModels
+                                  .firstWhere((m) => m.id == _selectedModel)
+                                  .name,
+                              style: const TextStyle(color: Colors.orange),
+                            ),
+                            trailing: const Icon(
+                              Icons.arrow_forward_ios,
+                              color: Colors.white54,
+                              size: 16,
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              // Model picker already exists via the app bar
+                              // PopupMenuButton — tapping here simply closes
+                              // the sheet so the user can reach it directly.
+                            },
+                          ),
+                          SwitchListTile(
+                            title: const Text(
+                              '🧠 Thinking Mode',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Show step-by-step reasoning',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableThinking,
+                            activeColor: Colors.orange,
+                            onChanged: (value) {
+                              setState(() {
+                                _enableThinking = value;
+                              });
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  this.setState(() {
+                                    _enableThinking = value;
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // ===== NEW: Temperature Presets section merged in =====
+                      _buildSettingsSection(
+                        title: '🌡️ Temperature Presets',
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    const Text(
+                                      '🎯 Precise',
+                                      style: TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      _temperature.toStringAsFixed(1),
+                                      style: const TextStyle(
+                                        color: Colors.orange,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    const Text(
+                                      ' 🎨 Creative',
+                                      style: TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Slider(
+                                  value: _temperature,
+                                  min: 0.0,
+                                  max: 1.0,
+                                  divisions: 10,
+                                  activeColor: Colors.orange,
+                                  inactiveColor: Colors.grey.shade700,
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _temperature = value;
+                                    });
+                                    WidgetsBinding.instance
+                                        .addPostFrameCallback((_) {
+                                      if (mounted) {
+                                        this.setState(() {
+                                          _temperature = value;
+                                        });
+                                      }
+                                    });
+                                  },
+                                ),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceEvenly,
+                                  children: [
+                                    _buildPresetChip(
+                                      'Precise',
+                                      0.1,
+                                      setState,
+                                    ),
+                                    _buildPresetChip(
+                                      'Balanced',
+                                      0.5,
+                                      setState,
+                                    ),
+                                    _buildPresetChip(
+                                      'Creative',
+                                      0.8,
+                                      setState,
+                                    ),
+                                    _buildPresetChip('Wild', 1.0, setState),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
 
                       _buildSettingsSection(
                         title: 'Chat Settings',
@@ -1699,6 +1974,51 @@ Current Year: $currentYear''';
                                   });
                                 }
                               });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // ===== NEW: Chat search entry point in the settings
+                      // sheet, in addition to the app bar popup menu =====
+                      _buildSettingsSection(
+                        title: '🔎 History Tools',
+                        children: [
+                          ListTile(
+                            leading: const Icon(
+                              Icons.search,
+                              color: Colors.blueAccent,
+                            ),
+                            title: const Text(
+                              'Search Chats',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Find a past conversation by keyword',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _openChatSearch();
+                            },
+                          ),
+                          ListTile(
+                            leading: const Icon(
+                              Icons.add_comment_outlined,
+                              color: Colors.green,
+                            ),
+                            title: const Text(
+                              'New Chat',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Start a fresh conversation',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _startNewChat();
                             },
                           ),
                         ],
@@ -1871,6 +2191,52 @@ Current Year: $currentYear''';
     );
   }
 
+  // ===== NEW: Temperature preset chip helper =====
+  // Kept as its own small widget builder that takes the modal sheet's local
+  // setState so tapping a preset updates the slider live inside the sheet,
+  // and also mirrors the change onto the parent widget state afterward so
+  // the value is respected once the sheet is dismissed.
+  Widget _buildPresetChip(
+    String label,
+    double value,
+    void Function(void Function()) sheetSetState,
+  ) {
+    final isActive = (_temperature - value).abs() < 0.05;
+    return GestureDetector(
+      onTap: () {
+        sheetSetState(() {
+          _temperature = value;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _temperature = value;
+            });
+          }
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.orange.withAlpha(50) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isActive ? Colors.orange : Colors.grey.shade700,
+            width: isActive ? 2 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.orange : Colors.white54,
+            fontSize: 11,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSettingsSection({
     required String title,
     required List<Widget> children,
@@ -1903,6 +2269,19 @@ Current Year: $currentYear''';
       context,
       MaterialPageRoute(
         builder: (context) => _buildUserProfileScreen(),
+        fullscreenDialog: true,
+      ),
+    );
+  }
+
+  // ===== NEW: Open the Chat Search screen =====
+  void _openChatSearch() {
+    _chatSearchController.clear();
+    _chatSearchQuery = '';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => _buildChatSearchScreen(),
         fullscreenDialog: true,
       ),
     );
@@ -1952,8 +2331,11 @@ Current Year: $currentYear''';
     );
   }
 
-    // ============================================================
+  // ============================================================
   // SCROLL PROGRESS INDICATOR - Shows position and message markers
+  // This doubles as the scroll scrubber: dragging or tapping along the
+  // track jumps the message list to that relative position, exactly like
+  // a video seek bar, while the small dashes mark where each message sits.
   // ============================================================
   Widget _buildScrollProgressIndicator() {
     if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
@@ -1997,7 +2379,7 @@ Current Year: $currentYear''';
         child: Container(
           width: 6,
           decoration: BoxDecoration(
-            color: Colors.grey.shade800.withAlpha(80), 
+            color: Colors.grey.shade800.withAlpha(80),
             borderRadius: BorderRadius.circular(3),
           ),
           child: Stack(
@@ -2028,7 +2410,7 @@ Current Year: $currentYear''';
                   right: 0,
                   child: Container(
                     height: 2,
-                    color: Colors.blue.withAlpha(80), 
+                    color: Colors.blue.withAlpha(80),
                   ),
                 );
               }),
@@ -2046,7 +2428,7 @@ Current Year: $currentYear''';
                     border: Border.all(color: Colors.white, width: 2),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withAlpha(80), 
+                        color: Colors.black.withAlpha(80),
                         blurRadius: 4,
                         offset: const Offset(0, 2),
                       ),
@@ -2293,6 +2675,277 @@ Current Year: $currentYear''';
     );
   }
 
+  // ============================================================
+  // NEW: CHAT SEARCH SCREEN
+  // Lists every saved conversation for the currently selected model,
+  // filtered by whatever the user has typed into the search box. Matching
+  // is done against every message's text inside each conversation, and any
+  // conversation containing at least one matching message is shown as a
+  // result with a highlighted snippet of the first matching line. Tapping
+  // a result loads that full conversation into the active chat view.
+  // ============================================================
+  Widget _buildChatSearchScreen() {
+    return StatefulBuilder(
+      builder: (context, setSearchState) {
+        final query = _chatSearchQuery.trim().toLowerCase();
+
+        final conversationsForModel =
+            _conversationBox.values
+                .where((c) => c.modelUsed == _selectedModel)
+                .toList()
+              ..sort(
+                (a, b) => b.lastMessageTimestamp.compareTo(
+                  a.lastMessageTimestamp,
+                ),
+              );
+
+        final List<_ChatSearchResult> results = [];
+
+        for (final conv in conversationsForModel) {
+          final msgs =
+              _chatBox.values
+                  .where((m) => m.conversationId == conv.id)
+                  .toList()
+                ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+          if (msgs.isEmpty) continue;
+
+          if (query.isEmpty) {
+            results.add(
+              _ChatSearchResult(
+                conversationId: conv.id,
+                snippet:
+                    msgs.first.text.length > 90
+                        ? '${msgs.first.text.substring(0, 90)}...'
+                        : msgs.first.text,
+                timestamp: conv.lastMessageTimestamp,
+                messageCount: conv.messageCount,
+              ),
+            );
+            continue;
+          }
+
+          ChatMessageHive? matchingMessage;
+          for (final m in msgs) {
+            if (m.text.toLowerCase().contains(query)) {
+              matchingMessage = m;
+              break;
+            }
+          }
+
+          if (matchingMessage != null) {
+            results.add(
+              _ChatSearchResult(
+                conversationId: conv.id,
+                snippet:
+                    matchingMessage.text.length > 90
+                        ? '${matchingMessage.text.substring(0, 90)}...'
+                        : matchingMessage.text,
+                timestamp: conv.lastMessageTimestamp,
+                messageCount: conv.messageCount,
+              ),
+            );
+          }
+        }
+
+        return Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            title: const Text('Search Chats'),
+          ),
+          body: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  controller: _chatSearchController,
+                  autofocus: true,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Search conversation text...',
+                    hintStyle: const TextStyle(color: Colors.grey),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    suffixIcon:
+                        _chatSearchController.text.isNotEmpty
+                            ? IconButton(
+                              icon: const Icon(
+                                Icons.clear,
+                                color: Colors.grey,
+                              ),
+                              onPressed: () {
+                                _chatSearchController.clear();
+                                setSearchState(() {
+                                  _chatSearchQuery = '';
+                                });
+                              },
+                            )
+                            : null,
+                    filled: true,
+                    fillColor: Colors.grey.shade900,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onChanged: (value) {
+                    _searchDebounce?.cancel();
+                    _searchDebounce = Timer(
+                      const Duration(milliseconds: 300),
+                      () {
+                        setSearchState(() {
+                          _chatSearchQuery = value;
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+              Expanded(
+                child:
+                    results.isEmpty
+                        ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.forum_outlined,
+                                color: Colors.grey.shade700,
+                                size: 56,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                query.isEmpty
+                                    ? 'No saved conversations yet for this model'
+                                    : 'No conversations match "$query"',
+                                style: TextStyle(
+                                  color: Colors.grey.shade500,
+                                  fontSize: 14,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        )
+                        : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          itemCount: results.length,
+                          itemBuilder: (context, index) {
+                            final result = results[index];
+                            return Card(
+                              color: Colors.grey.shade900,
+                              margin: const EdgeInsets.symmetric(vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
+                                ),
+                                leading: const CircleAvatar(
+                                  backgroundColor: Colors.orange,
+                                  child: Icon(
+                                    Icons.chat_bubble_outline,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                ),
+                                title: _buildHighlightedSnippet(
+                                  result.snippet,
+                                  query,
+                                ),
+                                subtitle: Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    '${DateFormat('MMM d, yyyy • HH:mm').format(result.timestamp)}  ·  ${result.messageCount} messages',
+                                    style: const TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                                trailing: const Icon(
+                                  Icons.arrow_forward_ios,
+                                  color: Colors.white38,
+                                  size: 14,
+                                ),
+                                onTap: () async {
+                                  Navigator.of(context).pop();
+                                  await _loadSpecificConversation(
+                                    result.conversationId,
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ===== NEW: Highlighted snippet helper for search results =====
+  // Splits the snippet around the query (case-insensitive) and renders the
+  // matching portion in bold orange so the reader can spot at a glance why
+  // this particular conversation matched their search.
+  Widget _buildHighlightedSnippet(String snippet, String query) {
+    if (query.isEmpty) {
+      return Text(
+        snippet,
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final lowerSnippet = snippet.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final matchIndex = lowerSnippet.indexOf(lowerQuery);
+
+    if (matchIndex == -1) {
+      return Text(
+        snippet,
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final before = snippet.substring(0, matchIndex);
+    final match = snippet.substring(matchIndex, matchIndex + query.length);
+    final after = snippet.substring(matchIndex + query.length);
+
+    return RichText(
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        children: [
+          TextSpan(text: before),
+          TextSpan(
+            text: match,
+            style: const TextStyle(
+              color: Colors.orange,
+              fontWeight: FontWeight.bold,
+              backgroundColor: Color(0x33FFA500),
+            ),
+          ),
+          TextSpan(text: after),
+        ],
+      ),
+    );
+  }
+
   void _clearChatHistory() async {
     final modelName =
         _availableModels.firstWhere((m) => m.id == _selectedModel).name;
@@ -2508,7 +3161,7 @@ Current Year: $currentYear''';
       
       if (window.location.href.includes('chat.openai.com')) {
         setTimeout(() => {
-          const preciseElements = document.querySelectorAll('[class*="precise"], [class*="accurate"], [class*="temperature"');
+          const preciseElements = document.querySelectorAll('[class*="precise"], [class*="accurate"], [class*="temperature"]');
           preciseElements.forEach(el => {
             if (el.textContent?.toLowerCase().includes('precise') || 
                 el.textContent?.toLowerCase().includes('accurate')) {
@@ -2833,6 +3486,40 @@ Current Year: $currentYear''';
                   );
                 }),
                 const PopupMenuDivider(),
+                // ===== NEW: New Chat action in the popup menu =====
+                PopupMenuItem<String>(
+                  value: 'newchat',
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.add_comment_outlined,
+                      color: Colors.white,
+                    ),
+                    title: const Text(
+                      'New Chat',
+                      style: TextStyle(color: Colors.greenAccent),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _startNewChat();
+                    },
+                  ),
+                ),
+                // ===== NEW: Search Chats action in the popup menu =====
+                PopupMenuItem<String>(
+                  value: 'search',
+                  child: ListTile(
+                    leading: const Icon(Icons.search, color: Colors.white),
+                    title: const Text(
+                      'Search Chats',
+                      style: TextStyle(color: Colors.blueAccent),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openChatSearch();
+                    },
+                  ),
+                ),
+                const PopupMenuDivider(),
                 PopupMenuItem<String>(
                   value: 'settings',
                   child: ListTile(
@@ -2900,6 +3587,10 @@ Current Year: $currentYear''';
                 _clearChatHistory();
               } else if (value == 'share') {
                 _shareConversation();
+              } else if (value == 'newchat') {
+                _startNewChat();
+              } else if (value == 'search') {
+                _openChatSearch();
               } else if (_availableModels.any((m) => m.id == value)) {
                 _changeModel(value);
               }
@@ -3088,6 +3779,44 @@ Current Year: $currentYear''';
                           ),
                         ),
 
+                        const SizedBox(width: 6),
+                        // ===== NEW: Quick search icon in the top bar =====
+                        GestureDetector(
+                          onTap: _openChatSearch,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withAlpha(20),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.purpleAccent,
+                                width: 1,
+                              ),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(
+                                  Icons.search,
+                                  size: 10,
+                                  color: Colors.purpleAccent,
+                                ),
+                                SizedBox(width: 3),
+                                Text(
+                                  'Search',
+                                  style: TextStyle(
+                                    color: Colors.purpleAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
                         const Spacer(),
 
                         if (_enableStreaming)
@@ -3250,6 +3979,14 @@ Current Year: $currentYear''';
                                   );
                                 } else {
                                   if (_isThinkingPhase && _enableThinking) {
+                                    // ===== NEW: Multi-step phase caption =====
+                                    // Replaces the static 'Thinking Process'
+                                    // title with a rotating phase label that
+                                    // reflects how far the reasoning text
+                                    // has progressed so far.
+                                    final phaseLabel = _thinkingPhaseLabel(
+                                      _currentThinkingProcess,
+                                    );
                                     return Container(
                                       margin: const EdgeInsets.symmetric(
                                         vertical: 8,
@@ -3279,12 +4016,43 @@ Current Year: $currentYear''';
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
                                               children: [
-                                                const Text(
-                                                  'Thinking Process',
-                                                  style: TextStyle(
-                                                    color: Colors.cyanAccent,
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 14,
+                                                Row(
+                                                  children: [
+                                                    const Text(
+                                                      'Thinking Process',
+                                                      style: TextStyle(
+                                                        color:
+                                                            Colors.cyanAccent,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 14,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    const SizedBox(
+                                                      width: 10,
+                                                      height: 10,
+                                                      child: CircularProgressIndicator(
+                                                        strokeWidth: 1.5,
+                                                        valueColor:
+                                                            AlwaysStoppedAnimation<
+                                                              Color
+                                                            >(
+                                                              Colors.cyanAccent,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  phaseLabel,
+                                                  style: const TextStyle(
+                                                    color:
+                                                        Colors.tealAccent,
+                                                    fontSize: 11,
+                                                    fontStyle:
+                                                        FontStyle.italic,
                                                   ),
                                                 ),
                                                 const SizedBox(height: 8),
@@ -3531,9 +4299,8 @@ Current Year: $currentYear''';
                 ],
               ),
             ),
-_buildBannerAd(),
             _buildScrollToBottomButton(),
-            _buildScrollProgressIndicator(), 
+            _buildScrollProgressIndicator(),
           ],
         ),
       ),
@@ -4289,4 +5056,22 @@ class _ParsedResponse {
   final String finalResponse;
 
   _ParsedResponse({required this.thinkingProcess, required this.finalResponse});
+}
+
+// ===== NEW: Small data holder used by the Chat Search results list =====
+// Bundles just enough information about a matched conversation for the
+// search screen to render a result row and pass a conversation id back
+// through onTap so the calling screen can load that full conversation.
+class _ChatSearchResult {
+  final String conversationId;
+  final String snippet;
+  final DateTime timestamp;
+  final int messageCount;
+
+  _ChatSearchResult({
+    required this.conversationId,
+    required this.snippet,
+    required this.timestamp,
+    required this.messageCount,
+  });
 }
