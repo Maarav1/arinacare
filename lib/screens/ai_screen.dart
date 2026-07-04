@@ -224,7 +224,6 @@ class _AIScreenState extends State<AIScreen>
 
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
-    _scrollController.addListener(_updateScrollIndicator);
     _messageController.addListener(_onMessageTextChanged);
   }
 
@@ -234,11 +233,6 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-  void _updateScrollIndicator() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
 
   // NEW: Scroll listener for button visibility
   void _onScroll() {
@@ -301,7 +295,6 @@ class _AIScreenState extends State<AIScreen>
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = null;
     _scrollController.removeListener(_onScroll);
-    _scrollController.removeListener(_updateScrollIndicator);
     _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     _nameController.dispose();
@@ -1301,12 +1294,10 @@ Current Year: $currentYear''';
     );
   }
 
-  // ===== NEW: Load a specific saved conversation into view =====
-  // Used by the Chat Search screen when the user taps a search result.
-  // Pulls every ChatMessageHive row tied to that conversation id, converts
-  // each into a ChatMessage, and replaces the current in-memory list with
-  // them so the chat view reflects exactly that saved conversation.
-  Future<void> _loadSpecificConversation(String conversationId) async {
+  Future<void> _loadSpecificConversation(
+    String conversationId, {
+    String? messageId,
+  }) async {
     await _cancelCurrentStream();
     await _saveConversation();
 
@@ -1319,11 +1310,21 @@ Current Year: $currentYear''';
 
       if (!mounted) return;
 
+      int targetIndex = 0;
+
       setState(() {
         _messages.clear();
         _messages.addAll(
-          messages.map(
-            (msg) => ChatMessage(
+          messages.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final msg = entry.value;
+
+            // Find the index of the message we want to scroll to
+            if (messageId != null && msg.key.toString() == messageId) {
+              targetIndex = idx;
+            }
+
+            return ChatMessage(
               text: msg.text,
               isUser: msg.isUser,
               timestamp: msg.timestamp,
@@ -1336,10 +1337,26 @@ Current Year: $currentYear''';
                       : null,
               images: msg.imageBytes,
               isIncomplete: msg.isIncomplete ?? false,
-            ),
-          ),
+            );
+          }).toList(),
         );
         _forceNewConversation = false;
+      });
+
+      // Scroll to the specific message after the UI updates
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients && targetIndex > 0) {
+          // Calculate approximate position of the message
+          final itemHeight = 100.0; // Approximate height per message
+          final targetOffset = (targetIndex * itemHeight).toDouble();
+          final maxScroll = _scrollController.position.maxScrollExtent;
+
+          _scrollController.animateTo(
+            targetOffset.clamp(0.0, maxScroll),
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOut,
+          );
+        }
       });
 
       _scheduleAutoScroll();
@@ -1511,10 +1528,27 @@ Current Year: $currentYear''';
           if (!mounted) return;
 
           final parsedResponse = _parseThinkingResponse(accumulatedResponse);
-          final finalOutput =
+
+          // Get the thinking process (if any)
+          final thinkingText =
+              _currentThinkingProcess.isNotEmpty
+                  ? _currentThinkingProcess
+                  : (parsedResponse.thinkingProcess.isNotEmpty
+                      ? parsedResponse.thinkingProcess
+                      : null);
+
+          // Get the final response (clean, without thinking markers)
+          String finalOutput =
               parsedResponse.finalResponse.isNotEmpty
                   ? parsedResponse.finalResponse
                   : _currentStreamText;
+
+          // Remove any leftover thinking markers from the response
+          finalOutput =
+              finalOutput
+                  .replaceAll('THINKING_START', '')
+                  .replaceAll('THINKING_END', '')
+                  .trim();
 
           final bool seemsIncomplete = _checkIfResponseIncomplete(finalOutput);
 
@@ -1526,14 +1560,9 @@ Current Year: $currentYear''';
                   text: finalOutput,
                   isUser: false,
                   timestamp: DateTime.now(),
-                  thinkingProcess:
-                      _currentThinkingProcess.isNotEmpty
-                          ? _currentThinkingProcess
-                          : null,
+                  thinkingProcess: thinkingText,
                   thinkingTime:
-                      _currentThinkingProcess.isNotEmpty
-                          ? _thinkingStopwatch.elapsed
-                          : null,
+                      thinkingText != null ? _thinkingStopwatch.elapsed : null,
                   isIncomplete: true,
                 ),
               );
@@ -1543,26 +1572,19 @@ Current Year: $currentYear''';
                   text: finalOutput,
                   isUser: false,
                   timestamp: DateTime.now(),
-                  thinkingProcess:
-                      _currentThinkingProcess.isNotEmpty
-                          ? _currentThinkingProcess
-                          : null,
+                  thinkingProcess: thinkingText,
                   thinkingTime:
-                      _currentThinkingProcess.isNotEmpty
-                          ? _thinkingStopwatch.elapsed
-                          : null,
+                      thinkingText != null ? _thinkingStopwatch.elapsed : null,
                 ),
               );
             }
             _resetMessageState();
-
             _retryCount = 0;
             _lastFailedPrompt = null;
             _lastFailedImages = null;
           });
 
           await _saveConversation();
-
           _scheduleAutoScroll();
         },
       );
@@ -2331,12 +2353,6 @@ Current Year: $currentYear''';
     );
   }
 
-  // ============================================================
-  // SCROLL PROGRESS INDICATOR - Shows position and message markers
-  // This doubles as the scroll scrubber: dragging or tapping along the
-  // track jumps the message list to that relative position, exactly like
-  // a video seek bar, while the small dashes mark where each message sits.
-  // ============================================================
   Widget _buildScrollProgressIndicator() {
     if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
       return const SizedBox.shrink();
@@ -2345,10 +2361,6 @@ Current Year: $currentYear''';
     final maxScroll = _scrollController.position.maxScrollExtent;
     if (maxScroll <= 0) return const SizedBox.shrink();
 
-    final currentScroll = _scrollController.offset;
-    final progress = (currentScroll / maxScroll).clamp(0.0, 1.0);
-
-    // Calculate available height (between top bar and input)
     final screenHeight = MediaQuery.of(context).size.height;
     final topBarHeight = 60.0;
     final inputHeight = 80.0;
@@ -2358,110 +2370,69 @@ Current Year: $currentYear''';
       right: 8,
       top: topBarHeight + 20,
       bottom: inputHeight + 40,
-      child: GestureDetector(
-        onTapDown: (details) {
-          final position = details.localPosition.dy / availableHeight;
-          final targetOffset = (position.clamp(0.0, 1.0)) * maxScroll;
-          _scrollController.animateTo(
-            targetOffset,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        },
-        onPanUpdate: (details) {
-          final position = (details.localPosition.dy / availableHeight).clamp(
-            0.0,
-            1.0,
-          );
-          final targetOffset = position * maxScroll;
-          _scrollController.jumpTo(targetOffset);
-        },
-        child: Container(
-          width: 6,
-          decoration: BoxDecoration(
-            color: Colors.grey.shade800.withAlpha(80),
-            borderRadius: BorderRadius.circular(3),
-          ),
-          child: Stack(
-            children: [
-              // Progress fill
-              Positioned(
-                top: 0,
+      child: Container(
+        width: 6,
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Stack(
+          children: [
+            // ===== MESSAGE MARKERS (DASHES) =====
+            ..._messages.asMap().entries.map((entry) {
+              final index = entry.key;
+              final message = _messages[index];
+              final position = (index / _messages.length) * availableHeight;
+
+              // Check if this is the current/latest message
+              final bool isCurrentMessage = (index == _messages.length - 1);
+
+              // Get preview text for tooltip (first 60 chars)
+              String preview = message.text.replaceAll('\n', ' ');
+              preview =
+                  preview.length > 60
+                      ? '${preview.substring(0, 60)}...'
+                      : preview;
+              final label =
+                  '${message.isUser ? '👤 You' : '🤖 Gemini'}: $preview';
+
+              return Positioned(
+                top: position - 2,
                 left: 0,
                 right: 0,
-                height: (progress * availableHeight).clamp(
-                  0.0,
-                  availableHeight,
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.orange,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-              // Message markers (the "dashes")
-              ..._messages.asMap().entries.map((entry) {
-                final index = entry.key;
-                final position = (index / _messages.length) * availableHeight;
-                return Positioned(
-                  top: position - 1,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    height: 2,
-                    color: Colors.blue.withAlpha(80),
-                  ),
-                );
-              }),
-              // Current position indicator (circle)
-              Positioned(
-                top: (progress * availableHeight) - 5,
-                left: -3,
-                right: -3,
-                child: Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: Colors.orange,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withAlpha(80),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // Tooltip on hover - show message number
-              if (_messages.isNotEmpty)
-                Positioned(
-                  top: (progress * availableHeight) - 20,
-                  right: 16,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade900,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.grey.shade700),
-                    ),
-                    child: Text(
-                      '${(progress * 100).toInt()}%',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 9,
+                child: MouseRegion(
+                  child: Tooltip(
+                    message: label,
+                    preferBelow: false,
+                    child: GestureDetector(
+                      onTap: () {
+                        final targetOffset =
+                            (index / _messages.length) * maxScroll;
+                        _scrollController.animateTo(
+                          targetOffset,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      child: Container(
+                        height:
+                            isCurrentMessage ? 6 : 3, // Current = twice height
+                        decoration: BoxDecoration(
+                          color:
+                              isCurrentMessage
+                                  ? Colors
+                                      .blue
+                                      .shade700 // Bold blue for current
+                                  : Colors.blue.withAlpha(150),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
                   ),
                 ),
-            ],
-          ),
+              );
+            }),
+          ],
         ),
       ),
     );
@@ -2675,78 +2646,68 @@ Current Year: $currentYear''';
     );
   }
 
-  // ============================================================
-  // NEW: CHAT SEARCH SCREEN
-  // Lists every saved conversation for the currently selected model,
-  // filtered by whatever the user has typed into the search box. Matching
-  // is done against every message's text inside each conversation, and any
-  // conversation containing at least one matching message is shown as a
-  // result with a highlighted snippet of the first matching line. Tapping
-  // a result loads that full conversation into the active chat view.
-  // ============================================================
-  Widget _buildChatSearchScreen() {
+Widget _buildChatSearchScreen() {
     return StatefulBuilder(
       builder: (context, setSearchState) {
         final query = _chatSearchQuery.trim().toLowerCase();
 
+        // Get all conversations for current model
         final conversationsForModel =
             _conversationBox.values
                 .where((c) => c.modelUsed == _selectedModel)
                 .toList()
               ..sort(
-                (a, b) => b.lastMessageTimestamp.compareTo(
-                  a.lastMessageTimestamp,
-                ),
+                (a, b) =>
+                    b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
               );
 
-        final List<_ChatSearchResult> results = [];
+        // Build a flat list of ALL messages with their conversation info
+        final List<_SearchResultItem> allResults = [];
 
         for (final conv in conversationsForModel) {
           final msgs =
-              _chatBox.values
-                  .where((m) => m.conversationId == conv.id)
-                  .toList()
+              _chatBox.values.where((m) => m.conversationId == conv.id).toList()
                 ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-          if (msgs.isEmpty) continue;
+          for (final msg in msgs) {
+            // Skip very short messages or system messages
+            if (msg.text.trim().length < 3) continue;
 
-          if (query.isEmpty) {
-            results.add(
-              _ChatSearchResult(
-                conversationId: conv.id,
-                snippet:
-                    msgs.first.text.length > 90
-                        ? '${msgs.first.text.substring(0, 90)}...'
-                        : msgs.first.text,
-                timestamp: conv.lastMessageTimestamp,
-                messageCount: conv.messageCount,
-              ),
+            // Get the conversation title (first user message)
+            String conversationTitle = 'Chat';
+            final firstUserMsg = msgs.firstWhere(
+              (m) => m.isUser,
+              orElse: () => msg,
             );
-            continue;
-          }
+            conversationTitle =
+                firstUserMsg.text.length > 30
+                    ? '${firstUserMsg.text.substring(0, 30)}...'
+                    : firstUserMsg.text;
 
-          ChatMessageHive? matchingMessage;
-          for (final m in msgs) {
-            if (m.text.toLowerCase().contains(query)) {
-              matchingMessage = m;
-              break;
-            }
-          }
-
-          if (matchingMessage != null) {
-            results.add(
-              _ChatSearchResult(
+            allResults.add(
+              _SearchResultItem(
                 conversationId: conv.id,
-                snippet:
-                    matchingMessage.text.length > 90
-                        ? '${matchingMessage.text.substring(0, 90)}...'
-                        : matchingMessage.text,
-                timestamp: conv.lastMessageTimestamp,
-                messageCount: conv.messageCount,
+                messageId: msg.key.toString(),
+                messageText: msg.text,
+                isUser: msg.isUser,
+                timestamp: msg.timestamp,
+                conversationTitle: conversationTitle,
+                messageCount: msgs.length,
               ),
             );
           }
         }
+
+        // Sort results by timestamp (newest first)
+        allResults.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+        // Filter results based on query
+        final filteredResults =
+            query.isEmpty
+                ? allResults
+                : allResults.where((item) {
+                  return item.messageText.toLowerCase().contains(query);
+                }).toList();
 
         return Scaffold(
           backgroundColor: Colors.black,
@@ -2758,7 +2719,7 @@ Current Year: $currentYear''';
               icon: const Icon(Icons.arrow_back),
               onPressed: () => Navigator.of(context).pop(),
             ),
-            title: const Text('Search Chats'),
+            title: const Text('Search Messages'),
           ),
           body: Column(
             children: [
@@ -2769,16 +2730,13 @@ Current Year: $currentYear''';
                   autofocus: true,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: 'Search conversation text...',
+                    hintText: 'Search all messages...',
                     hintStyle: const TextStyle(color: Colors.grey),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon:
                         _chatSearchController.text.isNotEmpty
                             ? IconButton(
-                              icon: const Icon(
-                                Icons.clear,
-                                color: Colors.grey,
-                              ),
+                              icon: const Icon(Icons.clear, color: Colors.grey),
                               onPressed: () {
                                 _chatSearchController.clear();
                                 setSearchState(() {
@@ -2807,23 +2765,38 @@ Current Year: $currentYear''';
                   },
                 ),
               ),
+              // Show result count
+              if (filteredResults.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${filteredResults.length} message${filteredResults.length > 1 ? 's' : ''} found',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
               Expanded(
                 child:
-                    results.isEmpty
+                    filteredResults.isEmpty
                         ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.forum_outlined,
+                                Icons.search_off,
                                 color: Colors.grey.shade700,
                                 size: 56,
                               ),
                               const SizedBox(height: 12),
                               Text(
                                 query.isEmpty
-                                    ? 'No saved conversations yet for this model'
-                                    : 'No conversations match "$query"',
+                                    ? 'No messages found for this model'
+                                    : 'No messages match "$query"',
                                 style: TextStyle(
                                   color: Colors.grey.shade500,
                                   fontSize: 14,
@@ -2835,41 +2808,77 @@ Current Year: $currentYear''';
                         )
                         : ListView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
-                          itemCount: results.length,
+                          itemCount: filteredResults.length,
                           itemBuilder: (context, index) {
-                            final result = results[index];
+                            final item = filteredResults[index];
+                            final isUser = item.isUser;
+
                             return Card(
                               color: Colors.grey.shade900,
-                              margin: const EdgeInsets.symmetric(vertical: 6),
+                              margin: const EdgeInsets.symmetric(vertical: 4),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: ListTile(
                                 contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 14,
-                                  vertical: 8,
+                                  vertical: 6,
                                 ),
-                                leading: const CircleAvatar(
-                                  backgroundColor: Colors.orange,
+                                leading: CircleAvatar(
+                                  backgroundColor:
+                                      isUser ? Colors.blue : Colors.orange,
+                                  radius: 16,
                                   child: Icon(
-                                    Icons.chat_bubble_outline,
+                                    isUser ? Icons.person : Icons.auto_awesome,
                                     color: Colors.white,
-                                    size: 18,
+                                    size: 14,
                                   ),
                                 ),
                                 title: _buildHighlightedSnippet(
-                                  result.snippet,
+                                  item.messageText,
                                   query,
                                 ),
-                                subtitle: Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Text(
-                                    '${DateFormat('MMM d, yyyy • HH:mm').format(result.timestamp)}  ·  ${result.messageCount} messages',
-                                    style: const TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 11,
+                                subtitle: Row(
+                                  children: [
+                                    Text(
+                                      '${isUser ? 'You' : 'Gemini'} • ',
+                                      style: TextStyle(
+                                        color:
+                                            isUser
+                                                ? Colors.blueAccent
+                                                : Colors.orange,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
-                                  ),
+                                    Text(
+                                      DateFormat(
+                                        'MMM d, HH:mm',
+                                      ).format(item.timestamp),
+                                      style: const TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade800,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        '${item.messageCount} msgs',
+                                        style: const TextStyle(
+                                          color: Colors.grey,
+                                          fontSize: 9,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 trailing: const Icon(
                                   Icons.arrow_forward_ios,
@@ -2879,7 +2888,9 @@ Current Year: $currentYear''';
                                 onTap: () async {
                                   Navigator.of(context).pop();
                                   await _loadSpecificConversation(
-                                    result.conversationId,
+                                    item.conversationId,
+                                    messageId:
+                                        item.messageId, // ← Pass the message ID to scroll to it
                                   );
                                 },
                               ),
@@ -3979,11 +3990,6 @@ Current Year: $currentYear''';
                                   );
                                 } else {
                                   if (_isThinkingPhase && _enableThinking) {
-                                    // ===== NEW: Multi-step phase caption =====
-                                    // Replaces the static 'Thinking Process'
-                                    // title with a rotating phase label that
-                                    // reflects how far the reasoning text
-                                    // has progressed so far.
                                     final phaseLabel = _thinkingPhaseLabel(
                                       _currentThinkingProcess,
                                     );
@@ -3992,97 +3998,86 @@ Current Year: $currentYear''';
                                         vertical: 8,
                                         horizontal: 4,
                                       ),
-                                      padding: const EdgeInsets.all(12),
+                                      padding: const EdgeInsets.all(14),
                                       decoration: BoxDecoration(
-                                        color: Colors.cyan.withAlpha(20),
+                                        color: Colors.grey.shade900,
                                         borderRadius: BorderRadius.circular(12),
                                         border: Border.all(
-                                          color: Colors.cyanAccent,
+                                          color: Colors.purpleAccent.withAlpha(
+                                            60,
+                                          ),
                                           width: 1,
                                         ),
                                       ),
-                                      child: Row(
+                                      child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          const Icon(
-                                            Icons.psychology,
-                                            color: Colors.blueAccent,
-                                            size: 20,
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Row(
-                                                  children: [
-                                                    const Text(
-                                                      'Thinking Process',
-                                                      style: TextStyle(
-                                                        color:
-                                                            Colors.cyanAccent,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        fontSize: 14,
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    const SizedBox(
-                                                      width: 10,
-                                                      height: 10,
-                                                      child: CircularProgressIndicator(
-                                                        strokeWidth: 1.5,
-                                                        valueColor:
-                                                            AlwaysStoppedAnimation<
-                                                              Color
-                                                            >(
-                                                              Colors.cyanAccent,
-                                                            ),
-                                                      ),
-                                                    ),
-                                                  ],
+                                          Row(
+                                            children: [
+                                              const Icon(
+                                                Icons.psychology,
+                                                color: Colors.purpleAccent,
+                                                size: 18,
+                                              ),
+                                              const SizedBox(width: 10),
+                                              const Text(
+                                                'Thinking...',
+                                                style: TextStyle(
+                                                  color: Colors.purpleAccent,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 14,
                                                 ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  phaseLabel,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              const SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(Colors.purpleAccent),
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                              Text(
+                                                phaseLabel,
+                                                style: const TextStyle(
+                                                  color: Colors.grey,
+                                                  fontSize: 11,
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          if (_currentThinkingProcess
+                                              .isNotEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 10,
+                                              ),
+                                              child: Container(
+                                                padding: const EdgeInsets.all(
+                                                  12,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  _currentThinkingProcess,
                                                   style: const TextStyle(
                                                     color:
-                                                        Colors.tealAccent,
-                                                    fontSize: 11,
-                                                    fontStyle:
-                                                        FontStyle.italic,
+                                                        Colors.lightGreenAccent,
+                                                    fontSize: 13,
+                                                    height: 1.4,
                                                   ),
                                                 ),
-                                                const SizedBox(height: 8),
-                                                if (_currentThinkingProcess
-                                                    .isNotEmpty)
-                                                  Container(
-                                                    padding:
-                                                        const EdgeInsets.all(
-                                                          10,
-                                                        ),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.black,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            8,
-                                                          ),
-                                                    ),
-                                                    child: Text(
-                                                      _currentThinkingProcess,
-                                                      style: const TextStyle(
-                                                        color:
-                                                            Colors
-                                                                .lightGreenAccent,
-                                                        fontSize: 13,
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
+                                              ),
                                             ),
-                                          ),
                                         ],
                                       ),
                                     );
@@ -4390,8 +4385,8 @@ class ChatMessage {
   final bool isLoading;
   final bool isError;
   final List<Uint8List>? images;
-  final String? thinkingProcess;
-  final Duration? thinkingTime;
+  final String? thinkingProcess; // ← This is the thinking text
+  final Duration? thinkingTime; // ← How long it thought
   final bool isIncomplete;
   final bool canRetry;
 
@@ -4454,12 +4449,20 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       return const SizedBox.shrink();
     }
 
+    final thinkingText = widget.message.thinkingProcess!;
+
+    // Extract a short preview (first 60 chars)
+    final preview =
+        thinkingText.length > 60
+            ? '${thinkingText.substring(0, 60)}...'
+            : thinkingText;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: Colors.grey.shade900,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.pinkAccent.withAlpha(100), width: 1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.purpleAccent.withAlpha(80), width: 1),
       ),
       child: ExpansionTile(
         key: ValueKey(
@@ -4474,29 +4477,41 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         },
         leading: Icon(
           _isThinkingExpanded ? Icons.expand_less : Icons.expand_more,
-          color: Colors.tealAccent,
+          color: Colors.purpleAccent,
           size: 20,
         ),
         title: Row(
           children: [
-            const Icon(Icons.psychology, size: 16, color: Colors.greenAccent),
+            const Icon(Icons.psychology, size: 16, color: Colors.purpleAccent),
             const SizedBox(width: 8),
             Text(
               widget.message.thinkingTime != null
-                  ? 'Thought for ${_formatThinkingTime(widget.message.thinkingTime!)}'
-                  : 'Thinking Process',
+                  ? '🧠 Thought for ${_formatThinkingTime(widget.message.thinkingTime!)}'
+                  : '🧠 Thinking Process',
               style: const TextStyle(
-                color: Colors.indigoAccent,
-                fontSize: 12,
+                color: Colors.purpleAccent,
+                fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
             ),
+            const Spacer(),
+            if (!_isThinkingExpanded)
+              Text(
+                preview,
+                style: const TextStyle(
+                  color: Colors.grey,
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             if (!_isThinkingExpanded)
               const Padding(
                 padding: EdgeInsets.only(left: 8),
                 child: Icon(
                   Icons.arrow_drop_down,
-                  size: 16,
+                  size: 20,
                   color: Colors.grey,
                 ),
               ),
@@ -4504,36 +4519,50 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ),
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: Colors.black,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(10),
+                bottomRight: Radius.circular(10),
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Detailed Reasoning:',
-                  style: TextStyle(
-                    color: Colors.lightBlue,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.lightbulb_outline,
+                      size: 14,
+                      color: Colors.amber,
+                    ),
+                    SizedBox(width: 6),
+                    Text(
+                      'Detailed Reasoning:',
+                      style: TextStyle(
+                        color: Colors.amber,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.green,
-                    borderRadius: BorderRadius.circular(6),
+                    color: Colors.grey.shade900,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade800),
                   ),
                   child: SelectionArea(
                     child: Text(
-                      widget.message.thinkingProcess!,
+                      thinkingText,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
-                        height: 1.4,
+                        fontSize: 13,
+                        height: 1.5,
                       ),
                     ),
                   ),
@@ -5058,20 +5087,23 @@ class _ParsedResponse {
   _ParsedResponse({required this.thinkingProcess, required this.finalResponse});
 }
 
-// ===== NEW: Small data holder used by the Chat Search results list =====
-// Bundles just enough information about a matched conversation for the
-// search screen to render a result row and pass a conversation id back
-// through onTap so the calling screen can load that full conversation.
-class _ChatSearchResult {
+// ===== NEW: Search result item for individual messages =====
+class _SearchResultItem {
   final String conversationId;
-  final String snippet;
+  final String messageId;
+  final String messageText;
+  final bool isUser;
   final DateTime timestamp;
+  final String conversationTitle;
   final int messageCount;
 
-  _ChatSearchResult({
+  _SearchResultItem({
     required this.conversationId,
-    required this.snippet,
+    required this.messageId,
+    required this.messageText,
+    required this.isUser,
     required this.timestamp,
+    required this.conversationTitle,
     required this.messageCount,
   });
 }
