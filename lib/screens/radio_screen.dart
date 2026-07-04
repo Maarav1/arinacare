@@ -237,22 +237,6 @@ class _RadioScreenState extends State<RadioScreen> {
         bitrate: '48 kbps',
       ),
 
-
-      RadioStation(
-        id: 'nhk_radio_japan',
-        name: 'NHK Radio Japan',
-        description:
-            'Japan\'s international broadcasting - News, Culture, Music',
-        streamUrl:
-            'https://nhkradioakr2-i.akamaihd.net/hls/live/511633/1-r2/1-r2.m3u8',
-        logoUrl:
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/NHK_logo.svg/512px-NHK_logo.svg.png',
-        language: 'Japanese / English',
-        category: 'News',
-        country: 'Japan',
-        color: Colors.red,
-        bitrate: '48 kbps',
-      ),
       RadioStation(
         id: 'dw_english',
         name: 'DW English',
