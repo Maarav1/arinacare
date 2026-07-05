@@ -92,10 +92,10 @@ class _AIScreenState extends State<AIScreen>
     GeminiModel(
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
-      description: 'High-speed chat',
-      priority: 'Recommended',
-      bestFor: 'Most applications',
-      isRecommended: true,
+      description: 'Well-rounded thinking model',
+      priority: 'Legacy Recommended',
+      bestFor: 'Balanced price-performance tasks',
+      isRecommended: false,
     ),
     GeminiModel(
       id: 'gemini-flash-latest',
@@ -114,11 +114,27 @@ class _AIScreenState extends State<AIScreen>
       isRecommended: false,
     ),
     GeminiModel(
-      id: 'gemini-3-flash-preview',
-      name: 'Gemini 3 Flash Preview',
-      description: 'PhD-level reasoning',
-      priority: 'Newest Frontier',
-      bestFor: 'Latest model',
+      id: 'gemini-3.5-flash',
+      name: 'Gemini 3.5 Flash',
+      description: 'Frontier-class performance at Flash speeds',
+      priority: 'Recommended',
+      bestFor: 'Most applications and agentic workflows',
+      isRecommended: true,
+    ),
+    GeminiModel(
+      id: 'gemini-3.1-pro-preview',
+      name: 'Gemini 3.1 Pro (Preview)',
+      description: 'Advanced reasoning and complex problem-solving',
+      priority: 'High Reasoning',
+      bestFor: 'Advanced coding and multi-step reasoning',
+      isRecommended: false,
+    ),
+    GeminiModel(
+      id: 'gemini-3.1-flash-lite',
+      name: 'Gemini 3.1 Flash-Lite',
+      description: 'Ultra-fast and cost-sensitive workhorse',
+      priority: 'High Throughput',
+      bestFor: 'High-volume, low-latency background tasks',
       isRecommended: false,
     ),
   ];
@@ -201,6 +217,8 @@ class _AIScreenState extends State<AIScreen>
   bool _userScrolledUp = false;
 
   Timer? _searchDebounce; 
+
+  bool _isHovering = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -520,6 +538,8 @@ class _AIScreenState extends State<AIScreen>
       });
     }
   }
+
+
 
   void _changeModel(String newModel) async {
     await _saveConversation();
@@ -2087,8 +2107,8 @@ Current Year: $currentYear''';
                               width: 150,
                               child: Slider(
                                 value: _maxContextMessages.toDouble(),
-                                min: 5,
-                                max: 50,
+                                min: 50,
+                                max: 500,
                                 divisions: 9,
                                 activeColor: Colors.green,
                                 inactiveColor: Colors.grey.shade700,
@@ -2321,6 +2341,226 @@ Current Year: $currentYear''';
   }
 
   // FIX: Scroll button on LEFT side
+  Widget _buildScrollProgressIndicator() {
+    if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
+      return const SizedBox.shrink();
+    }
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    if (maxScroll <= 0) return const SizedBox.shrink();
+
+    final screenHeight = MediaQuery.of(context).size.height;
+    final topBarHeight = 60.0;
+    final inputHeight = 80.0;
+    final availableHeight = screenHeight - topBarHeight - inputHeight - 120;
+
+    // Build the list of message previews for the hover popup
+    final List<String> previews = [];
+    for (int i = 0; i < _messages.length; i++) {
+      final message = _messages[i];
+      String preview = message.text.replaceAll('\n', ' ');
+      final words = preview.split(' ');
+      preview = words.take(5).join(' ');
+      if (words.length > 5) preview += '...';
+      previews.add('${message.isUser ? 'You' : 'Gemini'}: $preview');
+    }
+
+    return Positioned(
+      right: 8,
+      top: topBarHeight + 20,
+      bottom: inputHeight + 40,
+      child: MouseRegion(
+        onEnter: (_) {
+          setState(() {
+            _isHovering = true;
+          });
+        },
+        onExit: (_) {
+          setState(() {
+            _isHovering = false;
+          });
+        },
+        child: Stack(
+          children: [
+            // ===== MESSAGE MARKERS (DASHES) - LONG LIKE DEEPSEEK =====
+            ..._messages.asMap().entries.map((entry) {
+              final index = entry.key;
+              final position = (index / _messages.length) * availableHeight;
+              final bool isCurrentMessage = (index == _messages.length - 1);
+
+              return Positioned(
+                top: position - 3,
+                left: 0,
+                right: 0,
+                child: GestureDetector(
+                  onTap: () {
+                    final targetOffset = (index / _messages.length) * maxScroll;
+                    _scrollController.animateTo(
+                      targetOffset,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOut,
+                    );
+                  },
+                  child: Container(
+                    height: isCurrentMessage ? 6 : 3,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      color:
+                          isCurrentMessage
+                              ? Colors.blue.shade700
+                              : Colors.blue.withAlpha(150),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              );
+            }),
+
+            // ===== HOVER POPUP CARD WITH ALL MESSAGE PREVIEWS =====
+            if (_isHovering && previews.isNotEmpty)
+              Positioned(
+                right: 16,
+                top: 0,
+                child: Container(
+                  width: 280,
+                  constraints: const BoxConstraints(maxHeight: 350),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade900,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade700, width: 1),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(180),
+                        blurRadius: 20,
+                        spreadRadius: 5,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade800,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(12),
+                            topRight: Radius.circular(12),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.list_alt,
+                              size: 16,
+                              color: Colors.orange,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Messages (${previews.length})',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _isHovering = false;
+                                });
+                              },
+                              child: const Icon(
+                                Icons.close,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // List of messages
+                      Flexible(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          itemCount: previews.length,
+                          itemBuilder: (context, index) {
+                            final bool isCurrent =
+                                (index == _messages.length - 1);
+                            return MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: ListTile(
+                                dense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 2,
+                                ),
+                                leading: Icon(
+                                  Icons.message,
+                                  size: 14,
+                                  color:
+                                      isCurrent ? Colors.orange : Colors.grey,
+                                ),
+                                title: Text(
+                                  previews[index],
+                                  style: TextStyle(
+                                    color:
+                                        isCurrent
+                                            ? Colors.orange
+                                            : Colors.white,
+                                    fontSize: 12,
+                                    fontWeight:
+                                        isCurrent
+                                            ? FontWeight.w600
+                                            : FontWeight.normal,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing:
+                                    isCurrent
+                                        ? const Icon(
+                                          Icons.chevron_right,
+                                          size: 14,
+                                          color: Colors.orange,
+                                        )
+                                        : null,
+                                onTap: () {
+                                  final targetOffset =
+                                      (index / _messages.length) * maxScroll;
+                                  _scrollController.animateTo(
+                                    targetOffset,
+                                    duration: const Duration(milliseconds: 300),
+                                    curve: Curves.easeOut,
+                                  );
+                                  setState(() {
+                                    _isHovering = false;
+                                  });
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // FIX: Scroll button on LEFT side
   Widget _buildScrollToBottomButton() {
     if (!_showScrollButton) return const SizedBox.shrink();
 
@@ -2348,91 +2588,6 @@ Current Year: $currentYear''';
             color: Colors.white,
             size: 20,
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildScrollProgressIndicator() {
-    if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
-      return const SizedBox.shrink();
-    }
-
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    if (maxScroll <= 0) return const SizedBox.shrink();
-
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topBarHeight = 60.0;
-    final inputHeight = 80.0;
-    final availableHeight = screenHeight - topBarHeight - inputHeight - 120;
-
-    return Positioned(
-      right: 8,
-      top: topBarHeight + 20,
-      bottom: inputHeight + 40,
-      child: Container(
-        width: 6,
-        decoration: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(3),
-        ),
-        child: Stack(
-          children: [
-            // ===== MESSAGE MARKERS (DASHES) =====
-            ..._messages.asMap().entries.map((entry) {
-              final index = entry.key;
-              final message = _messages[index];
-              final position = (index / _messages.length) * availableHeight;
-
-              // Check if this is the current/latest message
-              final bool isCurrentMessage = (index == _messages.length - 1);
-
-              // Get preview text for tooltip (first 60 chars)
-              String preview = message.text.replaceAll('\n', ' ');
-              preview =
-                  preview.length > 60
-                      ? '${preview.substring(0, 60)}...'
-                      : preview;
-              final label =
-                  '${message.isUser ? '👤 You' : '🤖 Gemini'}: $preview';
-
-              return Positioned(
-                top: position - 2,
-                left: 0,
-                right: 0,
-                child: MouseRegion(
-                  child: Tooltip(
-                    message: label,
-                    preferBelow: false,
-                    child: GestureDetector(
-                      onTap: () {
-                        final targetOffset =
-                            (index / _messages.length) * maxScroll;
-                        _scrollController.animateTo(
-                          targetOffset,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeOut,
-                        );
-                      },
-                      child: Container(
-                        height:
-                            isCurrentMessage ? 6 : 3, // Current = twice height
-                        decoration: BoxDecoration(
-                          color:
-                              isCurrentMessage
-                                  ? Colors
-                                      .blue
-                                      .shade700 // Bold blue for current
-                                  : Colors.blue.withAlpha(150),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ],
         ),
       ),
     );
