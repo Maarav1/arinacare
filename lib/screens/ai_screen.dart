@@ -32,19 +32,16 @@ class _AIScreenState extends State<AIScreen>
   bool _usingGeminiAPI = false;
   FocusNode? _inputFocusNode;
 
-  // Ad variables
   late BannerAd _bannerAd;
   InterstitialAd? _interstitialAd;
   bool _isBannerAdLoaded = false;
   bool _isInterstitialAdLoaded = false;
   Timer? _interstitialTimer;
 
-  // Hive boxes
   late Box<ChatMessageHive> _chatBox;
   late Box<ConversationHive> _conversationBox;
   late Box<UserProfileHive> _userProfileBox;
 
-  // Gemini API variables
   String _geminiApiKey = '';
   final TextEditingController _messageController = TextEditingController();
   final List<ChatMessage> _messages = [];
@@ -54,31 +51,19 @@ class _AIScreenState extends State<AIScreen>
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _interestsController = TextEditingController();
 
-  // ===== NEW: Chat search state =====
-  // Backing controller and query text for the Chat Search screen. This
-  // powers the keyword filter over every saved conversation for the
-  // currently selected model, with highlighted matches in the results list.
   final TextEditingController _chatSearchController = TextEditingController();
   String _chatSearchQuery = '';
 
-  // ===== NEW: Force-new-conversation flag =====
-  // When the user explicitly taps "New Chat", this flag tells
-  // _saveConversation to create a brand-new ConversationHive record on the
-  // next save instead of appending to the most recently used conversation
-  // for this model, which is the default behavior everywhere else.
   bool _forceNewConversation = false;
 
-  // Streaming variables
   String _currentStreamText = '';
   StreamSubscription<String>? _streamSubscription;
   bool _isStreaming = false;
   late ScrollController _scrollController;
 
-  // Continue response variables
   String _lastIncompleteResponse = '';
   bool _isContinuingResponse = false;
 
-  // Error handling and retry
   int _retryCount = 0;
   static const int _maxRetries = 3;
   String? _lastFailedPrompt;
@@ -86,16 +71,15 @@ class _AIScreenState extends State<AIScreen>
   bool _hasPartialResponse = false;
   String _partialResponseOnError = '';
 
-  // Model selection variables
   String _selectedModel = 'gemini-2.5-flash';
   final List<GeminiModel> _availableModels = [
     GeminiModel(
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
-      description: 'Well-rounded thinking model',
-      priority: 'Legacy Recommended',
-      bestFor: 'Balanced price-performance tasks',
-      isRecommended: false,
+      description: 'High-speed chat',
+      priority: 'Recommended',
+      bestFor: 'Most applications',
+      isRecommended: true,
     ),
     GeminiModel(
       id: 'gemini-flash-latest',
@@ -114,27 +98,11 @@ class _AIScreenState extends State<AIScreen>
       isRecommended: false,
     ),
     GeminiModel(
-      id: 'gemini-3.5-flash',
-      name: 'Gemini 3.5 Flash',
-      description: 'Frontier-class performance at Flash speeds',
-      priority: 'Recommended',
-      bestFor: 'Most applications and agentic workflows',
-      isRecommended: true,
-    ),
-    GeminiModel(
-      id: 'gemini-3.1-pro-preview',
-      name: 'Gemini 3.1 Pro (Preview)',
-      description: 'Advanced reasoning and complex problem-solving',
-      priority: 'High Reasoning',
-      bestFor: 'Advanced coding and multi-step reasoning',
-      isRecommended: false,
-    ),
-    GeminiModel(
-      id: 'gemini-3.1-flash-lite',
-      name: 'Gemini 3.1 Flash-Lite',
-      description: 'Ultra-fast and cost-sensitive workhorse',
-      priority: 'High Throughput',
-      bestFor: 'High-volume, low-latency background tasks',
+      id: 'gemini-3-flash-preview',
+      name: 'Gemini 3 Flash Preview',
+      description: 'PhD-level reasoning',
+      priority: 'Newest Frontier',
+      bestFor: 'Latest model',
       isRecommended: false,
     ),
   ];
@@ -184,41 +152,42 @@ class _AIScreenState extends State<AIScreen>
     ),
   ];
 
-  // Image picker
   final ImagePicker _picker = ImagePicker();
   final List<Uint8List> _selectedImages = [];
 
-  // Settings
   bool _enableAutoScroll = true;
   bool _enableStreaming = true;
   bool _enableImageUpload = true;
   bool _enableHistory = true;
   double _temperature = 0.2;
 
-  // Smart context settings
   int _maxContextMessages = 10;
   bool _enableSmartContext = true;
 
-  // Thinking mode tracking
   final Stopwatch _thinkingStopwatch = Stopwatch();
   String _currentThinkingProcess = '';
   bool _isThinkingComplete = false;
   bool _isThinkingPhase = false;
 
-  // Web search
   final bool _enableWebSearch = false;
 
-  // Auto-scroll timer
   Timer? _autoScrollTimer;
 
-  // NEW: Scroll button visibility timer
   Timer? _scrollButtonTimer;
   bool _showScrollButton = false;
   bool _userScrolledUp = false;
 
-  Timer? _searchDebounce; 
+  Timer? _searchDebounce;
 
-  bool _isHovering = false;
+  // NEW: Maps each message's index to a GlobalKey so the scrubber can
+  // read that message's real on-screen position after layout instead of
+  // guessing based on a proportional average, which is what makes the
+  // pixel-accurate jump described below possible.
+  final Map<int, GlobalKey> _messageKeys = {};
+
+  GlobalKey _keyForMessage(int index) {
+    return _messageKeys.putIfAbsent(index, () => GlobalKey());
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -231,9 +200,7 @@ class _AIScreenState extends State<AIScreen>
     _initializeWebView();
     _initializeFocusNode();
 
-    // ===== WEB COMPATIBILITY: Skip ads on web =====
     if (!kIsWeb) {
-      // Initialize ads only on mobile
       MobileAds.instance.initialize();
       _loadBannerAd();
       _loadInterstitialAd();
@@ -251,8 +218,6 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-
-  // NEW: Scroll listener for button visibility
   void _onScroll() {
     if (!_scrollController.hasClients) return;
 
@@ -278,7 +243,6 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-  // NEW: Reset scroll button auto-hide timer
   void _resetScrollButtonTimer() {
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = Timer(const Duration(seconds: 5), () {
@@ -312,6 +276,7 @@ class _AIScreenState extends State<AIScreen>
     _autoScrollTimer = null;
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = null;
+    _searchDebounce?.cancel();
     _scrollController.removeListener(_onScroll);
     _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
@@ -321,7 +286,6 @@ class _AIScreenState extends State<AIScreen>
     _inputFocusNode?.dispose();
     _scrollController.dispose();
 
-    // ===== WEB COMPATIBILITY: Only dispose ads on mobile =====
     if (!kIsWeb) {
       _bannerAd.dispose();
       _interstitialTimer?.cancel();
@@ -379,8 +343,6 @@ class _AIScreenState extends State<AIScreen>
 
   void _initializeApiKey() {
     if (kIsWeb) {
-      // On web: proxy handles auth — no key needed in app
-      // Set initialized to true always on web since proxy is always available
       _geminiApiKey = 'proxy';
       _geminiInitialized = true;
     } else {
@@ -408,7 +370,6 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-  // Banner Ad Methods
   void _loadBannerAd() {
     _bannerAd = BannerAd(
       size: AdSize.banner,
@@ -431,7 +392,6 @@ class _AIScreenState extends State<AIScreen>
     _bannerAd.load();
   }
 
-  // Interstitial Ad Methods
   void _loadInterstitialAd() {
     InterstitialAd.load(
       adUnitId: 'ca-app-pub-1472609237394607/5863485201',
@@ -491,7 +451,6 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Widget _buildBannerAd() {
-    // ===== WEB COMPATIBILITY: No ads on web =====
     if (kIsWeb) {
       return const SizedBox.shrink();
     }
@@ -539,8 +498,6 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-
-
   void _changeModel(String newModel) async {
     await _saveConversation();
     await _cancelCurrentStream();
@@ -550,6 +507,7 @@ class _AIScreenState extends State<AIScreen>
     setState(() {
       _selectedModel = newModel;
       _messages.clear();
+      _messageKeys.clear();
       _currentStreamText = '';
       _selectedImages.clear();
       _currentThinkingProcess = '';
@@ -602,6 +560,7 @@ class _AIScreenState extends State<AIScreen>
         if (mounted) {
           setState(() {
             _messages.clear();
+            _messageKeys.clear();
             _messages.addAll(
               messages.map(
                 (msg) => ChatMessage(
@@ -625,7 +584,6 @@ class _AIScreenState extends State<AIScreen>
           if (kDebugMode) {
             print('✅ Loaded ${messages.length} messages for model: $modelId');
           }
-          // Restore continue state from loaded history
           final lastAiMsg = _messages.lastWhere(
             (m) => !m.isUser && m.isIncomplete && !m.isError,
             orElse:
@@ -868,7 +826,6 @@ Current Year: $currentYear''';
     String prompt, {
     List<Uint8List>? images,
   }) async* {
-    // ===== WEB COMPATIBILITY: Use Cloud Function proxy on web =====
     final String url =
         kIsWeb
             ? 'https://us-central1-lifematters-c466d.cloudfunctions.net/geminiProxy?model=$_selectedModel&streaming=true'
@@ -906,7 +863,7 @@ Current Year: $currentYear''';
       ],
       'tools': [
         {
-          'google_search': {}, // <-- This activates real-time search
+          'google_search': {},
         },
       ],
     };
@@ -994,7 +951,6 @@ Current Year: $currentYear''';
 
   Future<void> _retryFailedRequest() async {
     if (_lastFailedPrompt == null) {
-      // Recover last user message as the failed prompt
       final lastUser = _messages.lastWhere(
         (m) => m.isUser,
         orElse:
@@ -1039,9 +995,7 @@ Current Year: $currentYear''';
     );
   }
 
-  // FIX: Continue now properly appends to existing response
   Future<void> _continueIncompleteResponse() async {
-    // Recover incomplete text from messages list if state was lost
     if (_lastIncompleteResponse.isEmpty) {
       final lastIncomplete = _messages.lastWhere(
         (m) => !m.isUser && m.isIncomplete && !m.isError,
@@ -1102,7 +1056,6 @@ Current Year: $currentYear''';
         onDone: () async {
           if (!mounted) return;
 
-          // FIX: Properly append without spaces
           final continuedResponse =
               _lastIncompleteResponse + accumulatedResponse;
 
@@ -1180,12 +1133,6 @@ Current Year: $currentYear''';
     return _ParsedResponse(thinkingProcess: '', finalResponse: fullResponse);
   }
 
-  // ===== NEW: Multi-step thinking phase label generator =====
-  // Rather than a single static "Thinking Process" caption, this maps how
-  // far along the accumulated thinking text is into a short human readable
-  // phase name. It is purely cosmetic and does not alter what gets sent to
-  // or received from Gemini — it only changes what caption is shown above
-  // the live thinking box while a response is still streaming in.
   String _thinkingPhaseLabel(String thinkingTextSoFar) {
     final length = thinkingTextSoFar.trim().length;
     if (length == 0) return 'Reading your question';
@@ -1210,7 +1157,6 @@ Current Year: $currentYear''';
 
       ConversationHive currentConversation;
 
-      // ===== NEW: honor the force-new-conversation flag from "New Chat" =====
       if (_forceNewConversation) {
         final conversationId = DateTime.now().millisecondsSinceEpoch.toString();
         currentConversation =
@@ -1278,11 +1224,6 @@ Current Year: $currentYear''';
     }
   }
 
-  // ===== NEW: Start a brand new chat =====
-  // Clears the current message list, resets streaming/thinking/error state,
-  // and sets the force-new-conversation flag so the very next save creates
-  // a fresh ConversationHive record rather than overwriting whatever
-  // conversation was previously active for this model.
   Future<void> _startNewChat() async {
     await _cancelCurrentStream();
     await _saveConversation();
@@ -1291,6 +1232,7 @@ Current Year: $currentYear''';
 
     setState(() {
       _messages.clear();
+      _messageKeys.clear();
       _currentStreamText = '';
       _selectedImages.clear();
       _currentThinkingProcess = '';
@@ -1334,12 +1276,12 @@ Current Year: $currentYear''';
 
       setState(() {
         _messages.clear();
+        _messageKeys.clear();
         _messages.addAll(
           messages.asMap().entries.map((entry) {
             final idx = entry.key;
             final msg = entry.value;
 
-            // Find the index of the message we want to scroll to
             if (messageId != null && msg.key.toString() == messageId) {
               targetIndex = idx;
             }
@@ -1363,11 +1305,9 @@ Current Year: $currentYear''';
         _forceNewConversation = false;
       });
 
-      // Scroll to the specific message after the UI updates
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients && targetIndex > 0) {
-          // Calculate approximate position of the message
-          final itemHeight = 100.0; // Approximate height per message
+          final itemHeight = 100.0;
           final targetOffset = (targetIndex * itemHeight).toDouble();
           final maxScroll = _scrollController.position.maxScrollExtent;
 
@@ -1549,7 +1489,6 @@ Current Year: $currentYear''';
 
           final parsedResponse = _parseThinkingResponse(accumulatedResponse);
 
-          // Get the thinking process (if any)
           final thinkingText =
               _currentThinkingProcess.isNotEmpty
                   ? _currentThinkingProcess
@@ -1557,13 +1496,11 @@ Current Year: $currentYear''';
                       ? parsedResponse.thinkingProcess
                       : null);
 
-          // Get the final response (clean, without thinking markers)
           String finalOutput =
               parsedResponse.finalResponse.isNotEmpty
                   ? parsedResponse.finalResponse
                   : _currentStreamText;
 
-          // Remove any leftover thinking markers from the response
           finalOutput =
               finalOutput
                   .replaceAll('THINKING_START', '')
@@ -1793,10 +1730,6 @@ Current Year: $currentYear''';
                       ),
                       const SizedBox(height: 20),
 
-                      // ===== NEW: Model & Thinking section merged in from
-                      // the enhanced settings sheet you shared, giving quick
-                      // access to the current model and the thinking toggle
-                      // right at the top of the sheet =====
                       _buildSettingsSection(
                         title: '🎯 Model & Thinking',
                         children: [
@@ -1818,9 +1751,6 @@ Current Year: $currentYear''';
                             ),
                             onTap: () {
                               Navigator.pop(context);
-                              // Model picker already exists via the app bar
-                              // PopupMenuButton — tapping here simply closes
-                              // the sheet so the user can reach it directly.
                             },
                           ),
                           SwitchListTile(
@@ -1851,7 +1781,6 @@ Current Year: $currentYear''';
                       ),
                       const SizedBox(height: 16),
 
-                      // ===== NEW: Temperature Presets section merged in =====
                       _buildSettingsSection(
                         title: '🌡️ Temperature Presets',
                         children: [
@@ -2022,8 +1951,6 @@ Current Year: $currentYear''';
                       ),
                       const SizedBox(height: 16),
 
-                      // ===== NEW: Chat search entry point in the settings
-                      // sheet, in addition to the app bar popup menu =====
                       _buildSettingsSection(
                         title: '🔎 History Tools',
                         children: [
@@ -2107,8 +2034,8 @@ Current Year: $currentYear''';
                               width: 150,
                               child: Slider(
                                 value: _maxContextMessages.toDouble(),
-                                min: 50,
-                                max: 500,
+                                min: 5,
+                                max: 50,
                                 divisions: 9,
                                 activeColor: Colors.green,
                                 inactiveColor: Colors.grey.shade700,
@@ -2233,11 +2160,6 @@ Current Year: $currentYear''';
     );
   }
 
-  // ===== NEW: Temperature preset chip helper =====
-  // Kept as its own small widget builder that takes the modal sheet's local
-  // setState so tapping a preset updates the slider live inside the sheet,
-  // and also mirrors the change onto the parent widget state afterward so
-  // the value is respected once the sheet is dismissed.
   Widget _buildPresetChip(
     String label,
     double value,
@@ -2316,7 +2238,6 @@ Current Year: $currentYear''';
     );
   }
 
-  // ===== NEW: Open the Chat Search screen =====
   void _openChatSearch() {
     _chatSearchController.clear();
     _chatSearchQuery = '';
@@ -2329,7 +2250,6 @@ Current Year: $currentYear''';
     );
   }
 
-  // FIX: Instant scroll - milliseconds not minutes
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
@@ -2340,233 +2260,12 @@ Current Year: $currentYear''';
     }
   }
 
-  // FIX: Scroll button on LEFT side
-  Widget _buildScrollProgressIndicator() {
-    if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
-      return const SizedBox.shrink();
-    }
-
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    if (maxScroll <= 0) return const SizedBox.shrink();
-
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topBarHeight = 60.0;
-    final inputHeight = 80.0;
-    final availableHeight = screenHeight - topBarHeight - inputHeight - 120;
-
-    // Build the list of message previews for the hover popup
-    final List<String> previews = [];
-    for (int i = 0; i < _messages.length; i++) {
-      final message = _messages[i];
-      String preview = message.text.replaceAll('\n', ' ');
-      final words = preview.split(' ');
-      preview = words.take(5).join(' ');
-      if (words.length > 5) preview += '...';
-      previews.add('${message.isUser ? 'You' : 'Gemini'}: $preview');
-    }
-
-    return Positioned(
-      right: 8,
-      top: topBarHeight + 20,
-      bottom: inputHeight + 40,
-      child: MouseRegion(
-        onEnter: (_) {
-          setState(() {
-            _isHovering = true;
-          });
-        },
-        onExit: (_) {
-          setState(() {
-            _isHovering = false;
-          });
-        },
-        child: Stack(
-          children: [
-            // ===== MESSAGE MARKERS (DASHES) - LONG LIKE DEEPSEEK =====
-            ..._messages.asMap().entries.map((entry) {
-              final index = entry.key;
-              final position = (index / _messages.length) * availableHeight;
-              final bool isCurrentMessage = (index == _messages.length - 1);
-
-              return Positioned(
-                top: position - 3,
-                left: 0,
-                right: 0,
-                child: GestureDetector(
-                  onTap: () {
-                    final targetOffset = (index / _messages.length) * maxScroll;
-                    _scrollController.animateTo(
-                      targetOffset,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut,
-                    );
-                  },
-                  child: Container(
-                    height: isCurrentMessage ? 6 : 3,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color:
-                          isCurrentMessage
-                              ? Colors.blue.shade700
-                              : Colors.blue.withAlpha(150),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-              );
-            }),
-
-            // ===== HOVER POPUP CARD WITH ALL MESSAGE PREVIEWS =====
-            if (_isHovering && previews.isNotEmpty)
-              Positioned(
-                right: 16,
-                top: 0,
-                child: Container(
-                  width: 280,
-                  constraints: const BoxConstraints(maxHeight: 350),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade900,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade700, width: 1),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withAlpha(180),
-                        blurRadius: 20,
-                        spreadRadius: 5,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Header
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade800,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(12),
-                            topRight: Radius.circular(12),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.list_alt,
-                              size: 16,
-                              color: Colors.orange,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Messages (${previews.length})',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const Spacer(),
-                            GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  _isHovering = false;
-                                });
-                              },
-                              child: const Icon(
-                                Icons.close,
-                                size: 16,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // List of messages
-                      Flexible(
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          itemCount: previews.length,
-                          itemBuilder: (context, index) {
-                            final bool isCurrent =
-                                (index == _messages.length - 1);
-                            return MouseRegion(
-                              cursor: SystemMouseCursors.click,
-                              child: ListTile(
-                                dense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 2,
-                                ),
-                                leading: Icon(
-                                  Icons.message,
-                                  size: 14,
-                                  color:
-                                      isCurrent ? Colors.orange : Colors.grey,
-                                ),
-                                title: Text(
-                                  previews[index],
-                                  style: TextStyle(
-                                    color:
-                                        isCurrent
-                                            ? Colors.orange
-                                            : Colors.white,
-                                    fontSize: 12,
-                                    fontWeight:
-                                        isCurrent
-                                            ? FontWeight.w600
-                                            : FontWeight.normal,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                trailing:
-                                    isCurrent
-                                        ? const Icon(
-                                          Icons.chevron_right,
-                                          size: 14,
-                                          color: Colors.orange,
-                                        )
-                                        : null,
-                                onTap: () {
-                                  final targetOffset =
-                                      (index / _messages.length) * maxScroll;
-                                  _scrollController.animateTo(
-                                    targetOffset,
-                                    duration: const Duration(milliseconds: 300),
-                                    curve: Curves.easeOut,
-                                  );
-                                  setState(() {
-                                    _isHovering = false;
-                                  });
-                                },
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // FIX: Scroll button on LEFT side
   Widget _buildScrollToBottomButton() {
     if (!_showScrollButton) return const SizedBox.shrink();
 
     return Positioned(
       bottom: 80,
-      left: 12, // MOVED TO LEFT
+      left: 12,
       child: GestureDetector(
         onTap: _scrollToBottom,
         child: Container(
@@ -2590,6 +2289,25 @@ Current Year: $currentYear''';
           ),
         ),
       ),
+    );
+  }
+
+  // ============================================================
+  // Scroll scrubber entry point: builds the long-dash track plus its
+  // hover card, now backed by GlobalKey-based precise jumping and a
+  // smooth fade transition on the card, as described above.
+  // ============================================================
+  Widget _buildScrollProgressIndicator() {
+    if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
+      return const SizedBox.shrink();
+    }
+
+    return _MessageScrubber(
+      messages: _messages,
+      scrollController: _scrollController,
+      topOffset: 80,
+      bottomOffset: 120,
+      keyForMessage: _keyForMessage,
     );
   }
 
@@ -2627,8 +2345,6 @@ Current Year: $currentYear''';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
           _lastIncompleteResponse = '';
-          // FIX: On web the navigation delegate is not registered so
-          // _isLoading would never be reset to false. Keep it false on web.
           _isLoading = !kIsWeb;
         });
       }
@@ -2743,7 +2459,7 @@ Current Year: $currentYear''';
             TextField(
               controller: _interestsController,
               style: const TextStyle(color: Colors.white),
-              maxLines: null, // NO MAX LINES - unlimited input
+              maxLines: null,
               keyboardType: TextInputType.multiline,
               decoration: InputDecoration(
                 hintText:
@@ -2801,12 +2517,11 @@ Current Year: $currentYear''';
     );
   }
 
-Widget _buildChatSearchScreen() {
+  Widget _buildChatSearchScreen() {
     return StatefulBuilder(
       builder: (context, setSearchState) {
         final query = _chatSearchQuery.trim().toLowerCase();
 
-        // Get all conversations for current model
         final conversationsForModel =
             _conversationBox.values
                 .where((c) => c.modelUsed == _selectedModel)
@@ -2816,7 +2531,6 @@ Widget _buildChatSearchScreen() {
                     b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
               );
 
-        // Build a flat list of ALL messages with their conversation info
         final List<_SearchResultItem> allResults = [];
 
         for (final conv in conversationsForModel) {
@@ -2825,10 +2539,8 @@ Widget _buildChatSearchScreen() {
                 ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
           for (final msg in msgs) {
-            // Skip very short messages or system messages
             if (msg.text.trim().length < 3) continue;
 
-            // Get the conversation title (first user message)
             String conversationTitle = 'Chat';
             final firstUserMsg = msgs.firstWhere(
               (m) => m.isUser,
@@ -2853,10 +2565,8 @@ Widget _buildChatSearchScreen() {
           }
         }
 
-        // Sort results by timestamp (newest first)
         allResults.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-        // Filter results based on query
         final filteredResults =
             query.isEmpty
                 ? allResults
@@ -2920,7 +2630,6 @@ Widget _buildChatSearchScreen() {
                   },
                 ),
               ),
-              // Show result count
               if (filteredResults.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -3044,8 +2753,7 @@ Widget _buildChatSearchScreen() {
                                   Navigator.of(context).pop();
                                   await _loadSpecificConversation(
                                     item.conversationId,
-                                    messageId:
-                                        item.messageId, // ← Pass the message ID to scroll to it
+                                    messageId: item.messageId,
                                   );
                                 },
                               ),
@@ -3060,10 +2768,6 @@ Widget _buildChatSearchScreen() {
     );
   }
 
-  // ===== NEW: Highlighted snippet helper for search results =====
-  // Splits the snippet around the query (case-insensitive) and renders the
-  // matching portion in bold orange so the reader can spot at a glance why
-  // this particular conversation matched their search.
   Widget _buildHighlightedSnippet(String snippet, String query) {
     if (query.isEmpty) {
       return Text(
@@ -3161,6 +2865,7 @@ Widget _buildChatSearchScreen() {
       if (mounted) {
         setState(() {
           _messages.clear();
+          _messageKeys.clear();
           _currentStreamText = '';
           _currentThinkingProcess = '';
           _isThinkingComplete = false;
@@ -3222,15 +2927,9 @@ Widget _buildChatSearchScreen() {
   }
 
   void _initializeWebView() {
-    // ===== WEB COMPATIBILITY =====
-    // webview_flutter now handles web automatically
-    // No need to set WebViewPlatform.instance on web anymore
-
-    // Now create the controller with the appropriate platform
     late final PlatformWebViewControllerCreationParams params;
 
     if (!kIsWeb) {
-      // Mobile: Use native implementations
       if (WebViewPlatform.instance is WebKitWebViewPlatform) {
         params = WebKitWebViewControllerCreationParams(
           allowsInlineMediaPlayback: true,
@@ -3240,20 +2939,17 @@ Widget _buildChatSearchScreen() {
         params = const PlatformWebViewControllerCreationParams();
       }
     } else {
-      // Web: Use web params
       params = const PlatformWebViewControllerCreationParams();
     }
 
     final WebViewController controller =
         WebViewController.fromPlatformCreationParams(params);
 
-    // ===== MOBILE ONLY SETTINGS =====
     if (!kIsWeb) {
       controller.setJavaScriptMode(JavaScriptMode.unrestricted);
       controller.setBackgroundColor(const Color(0x00000000));
     }
 
-    // ===== NAVIGATION DELEGATE (MOBILE ONLY) =====
     if (!kIsWeb) {
       controller.setNavigationDelegate(
         NavigationDelegate(
@@ -3301,7 +2997,6 @@ Widget _buildChatSearchScreen() {
       );
     }
 
-    // ===== ANDROID SPECIFIC SETTINGS (MOBILE ONLY) =====
     if (!kIsWeb && controller.platform is AndroidWebViewController) {
       AndroidWebViewController.enableDebugging(true);
       (controller.platform as AndroidWebViewController)
@@ -3310,14 +3005,12 @@ Widget _buildChatSearchScreen() {
 
     _controller = controller;
 
-    // ===== WEB COMPATIBILITY: Skip user agent on web =====
     if (!kIsWeb) {
       _setUserAgent();
     }
   }
 
   void _applyAccuracySettings(String url) {
-    // ===== WEB COMPATIBILITY: runJavaScript might not work on web =====
     if (kIsWeb) return;
 
     final jsCode = """
@@ -3358,7 +3051,6 @@ Widget _buildChatSearchScreen() {
   }
 
   void _setUserAgent() async {
-    // ===== WEB COMPATIBILITY: User agent not needed on web =====
     if (kIsWeb) return;
 
     const desktopUserAgent =
@@ -3468,10 +3160,6 @@ Widget _buildChatSearchScreen() {
     );
   }
 
-  // NEW: On web, chat content gets stretched edge-to-edge on wide screens
-  // which is hard to read. This centers the chat column and caps its width
-  // like DeepSeek/ChatGPT/Claude web UIs do. Mobile is untouched because
-  // this returns the child unchanged when kIsWeb is false.
   Widget _webCentered(Widget child) {
     if (!kIsWeb) return child;
     return Center(
@@ -3652,7 +3340,6 @@ Widget _buildChatSearchScreen() {
                   );
                 }),
                 const PopupMenuDivider(),
-                // ===== NEW: New Chat action in the popup menu =====
                 PopupMenuItem<String>(
                   value: 'newchat',
                   child: ListTile(
@@ -3670,7 +3357,6 @@ Widget _buildChatSearchScreen() {
                     },
                   ),
                 ),
-                // ===== NEW: Search Chats action in the popup menu =====
                 PopupMenuItem<String>(
                   value: 'search',
                   child: ListTile(
@@ -3946,7 +3632,6 @@ Widget _buildChatSearchScreen() {
                         ),
 
                         const SizedBox(width: 6),
-                        // ===== NEW: Quick search icon in the top bar =====
                         GestureDetector(
                           onTap: _openChatSearch,
                           child: Container(
@@ -4131,17 +3816,20 @@ Widget _buildChatSearchScreen() {
                                       : 0),
                               itemBuilder: (context, index) {
                                 if (index < _messages.length) {
-                                  return ChatBubbleWithThinking(
-                                    message: _messages[index],
-                                    enableAutoScroll: _enableAutoScroll,
-                                    onContinuePressed:
-                                        _messages[index].isIncomplete
-                                            ? _continueIncompleteResponse
-                                            : null,
-                                    onRetryPressed:
-                                        _messages[index].canRetry
-                                            ? _retryFailedRequest
-                                            : null,
+                                  return KeyedSubtree(
+                                    key: _keyForMessage(index),
+                                    child: ChatBubbleWithThinking(
+                                      message: _messages[index],
+                                      enableAutoScroll: _enableAutoScroll,
+                                      onContinuePressed:
+                                          _messages[index].isIncomplete
+                                              ? _continueIncompleteResponse
+                                              : null,
+                                      onRetryPressed:
+                                          _messages[index].canRetry
+                                              ? _retryFailedRequest
+                                              : null,
+                                    ),
                                   );
                                 } else {
                                   if (_isThinkingPhase && _enableThinking) {
@@ -4188,12 +3876,14 @@ Widget _buildChatSearchScreen() {
                                               const SizedBox(
                                                 width: 14,
                                                 height: 14,
-                                                child: CircularProgressIndicator(
+                                                child:
+                                                    CircularProgressIndicator(
                                                   strokeWidth: 2,
                                                   valueColor:
                                                       AlwaysStoppedAnimation<
-                                                        Color
-                                                      >(Colors.purpleAccent),
+                                                          Color>(
+                                                    Colors.purpleAccent,
+                                                  ),
                                                 ),
                                               ),
                                               const Spacer(),
@@ -4350,7 +4040,7 @@ Widget _buildChatSearchScreen() {
                                     color: Colors.white,
                                     fontSize: 14,
                                   ),
-                                  maxLines: null, // NO MAX LINES - unlimited
+                                  maxLines: null,
                                   keyboardType: TextInputType.multiline,
                                   textInputAction: TextInputAction.newline,
                                   decoration: InputDecoration(
@@ -4540,8 +4230,8 @@ class ChatMessage {
   final bool isLoading;
   final bool isError;
   final List<Uint8List>? images;
-  final String? thinkingProcess; // ← This is the thinking text
-  final Duration? thinkingTime; // ← How long it thought
+  final String? thinkingProcess;
+  final Duration? thinkingTime;
   final bool isIncomplete;
   final bool canRetry;
 
@@ -4559,7 +4249,6 @@ class ChatMessage {
   });
 }
 
-// COMPLETELY REWRITTEN CODE BLOCK LOGIC - NO MORE BUGS!
 class _CodeBlock {
   final String language;
   final String code;
@@ -4606,7 +4295,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
 
     final thinkingText = widget.message.thinkingProcess!;
 
-    // Extract a short preview (first 60 chars)
     final preview =
         thinkingText.length > 60
             ? '${thinkingText.substring(0, 60)}...'
@@ -4749,7 +4437,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  // COMPLETELY NEW CODE BLOCK EXTRACTION - NO DUPLICATION BUG
   List<_CodeBlock> _extractCodeBlocks(String text) {
     final List<_CodeBlock> blocks = [];
     final regex = RegExp(r'```(\w*)\s*\n?([\s\S]*?)```', multiLine: true);
@@ -4759,7 +4446,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       final code = (match.group(2) ?? '').trim();
 
       if (code.isNotEmpty) {
-        // Check for duplicate code blocks
         final isDuplicate = blocks.any(
           (b) => b.code == code && b.language == language,
         );
@@ -4777,7 +4463,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     return blocks;
   }
 
-  // NEW: Build code block with language label and copy button
   Widget _buildCodeBlock(_CodeBlock block, int index) {
     return Container(
       width: double.infinity,
@@ -4877,7 +4562,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  // NEW: Parse text with code blocks - NO DUPLICATION
   Widget _buildParsedText(String text) {
     final codeBlocks = _extractCodeBlocks(text);
 
@@ -4890,7 +4574,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       );
     }
 
-    // Split text by code blocks
     String remainingText = text;
     final List<Widget> widgets = [];
 
@@ -4984,7 +4667,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     }
   }
 
-  // FIX: Copy entire message including code blocks
   void _copyFullMessage() {
     Clipboard.setData(ClipboardData(text: widget.message.text));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -5048,7 +4730,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  // NEW: Action buttons at bottom of AI responses
   Widget _buildActionButtons() {
     if (widget.message.isUser || widget.message.isLoading) {
       return const SizedBox.shrink();
@@ -5058,7 +4739,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       margin: const EdgeInsets.only(top: 12),
       child: Row(
         children: [
-          // Copy button
           InkWell(
             onTap: _copyFullMessage,
             child: Container(
@@ -5084,7 +4764,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
 
           const SizedBox(width: 8),
 
-          // Regenerate button (using retry logic)
           if (widget.onRetryPressed != null)
             InkWell(
               onTap: widget.onRetryPressed,
@@ -5206,7 +4885,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                         widget.onContinuePressed != null)
                       _buildContinueButton(),
 
-                    // NEW: Action buttons
                     if (!message.isError) _buildActionButtons(),
                   ],
                 ),
@@ -5242,7 +4920,6 @@ class _ParsedResponse {
   _ParsedResponse({required this.thinkingProcess, required this.finalResponse});
 }
 
-// ===== NEW: Search result item for individual messages =====
 class _SearchResultItem {
   final String conversationId;
   final String messageId;
@@ -5261,4 +4938,322 @@ class _SearchResultItem {
     required this.conversationTitle,
     required this.messageCount,
   });
+}
+
+// ============================================================
+// DeepSeek-style scroll scrubber, now with two upgrades applied:
+//
+// 1. Pixel-accurate jump. Instead of estimating a message's vertical
+//    position with a simple proportional calculation, each message row
+//    in the chat is wrapped in a KeyedSubtree using a GlobalKey supplied
+//    by the parent screen through keyForMessage. When a dash or a hover
+//    card row is tapped, this widget looks up that message's real
+//    RenderBox after the current frame has settled, reads its actual
+//    on-screen offset relative to the scrollable ancestor, and animates
+//    the ScrollController straight to that position. If a RenderBox is
+//    not yet resolvable for some reason, it falls back to the original
+//    proportional estimate so a tap never silently does nothing.
+//
+// 2. Smooth fade transition. The floating hover card is wrapped in an
+//    AnimatedOpacity tied to the same _showCard boolean the widget
+//    already tracked, using a hundred-and-fifty-millisecond easeOut
+//    curve, so it now fades gently into and out of view instead of
+//    snapping on and off. An IgnorePointer synced to the same boolean
+//    prevents the fading-out card from intercepting clicks while it is
+//    still visually present but on its way to fully transparent.
+// ============================================================
+class _MessageScrubber extends StatefulWidget {
+  final List<ChatMessage> messages;
+  final ScrollController scrollController;
+  final double topOffset;
+  final double bottomOffset;
+  final GlobalKey Function(int index) keyForMessage;
+
+  const _MessageScrubber({
+    required this.messages,
+    required this.scrollController,
+    required this.topOffset,
+    required this.bottomOffset,
+    required this.keyForMessage,
+  });
+
+  @override
+  State<_MessageScrubber> createState() => _MessageScrubberState();
+}
+
+class _MessageScrubberState extends State<_MessageScrubber> {
+  bool _showCard = false;
+  Timer? _hideTimer;
+
+  void _openCard() {
+    _hideTimer?.cancel();
+    if (!_showCard) {
+      setState(() => _showCard = true);
+    }
+  }
+
+  void _scheduleClose() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 220), () {
+      if (mounted) {
+        setState(() => _showCard = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  String _shortPreview(String text) {
+    final cleaned = text.replaceAll('\n', ' ').trim();
+    if (cleaned.isEmpty) return '(empty message)';
+    final words = cleaned.split(RegExp(r'\s+'));
+    if (words.length <= 5) return cleaned;
+    return '${words.take(5).join(' ')}...';
+  }
+
+  // Falls back to the proportional estimate if a real RenderBox for the
+  // target message cannot be resolved yet, which can happen if the list
+  // is still mid-rebuild at the exact moment of the tap.
+  void _jumpProportionally(int globalIndex) {
+    if (!widget.scrollController.hasClients) return;
+
+    final maxScroll = widget.scrollController.position.maxScrollExtent;
+    final total = widget.messages.length;
+
+    if (total <= 1 || maxScroll <= 0) {
+      widget.scrollController.jumpTo(0);
+      return;
+    }
+
+    final target = (globalIndex / (total - 1)) * maxScroll;
+    widget.scrollController.animateTo(
+      target.clamp(0.0, maxScroll),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _jumpTo(int globalIndex) {
+    // Defer until after the current frame so any pending layout from a
+    // just-completed rebuild has finished before we read RenderBox data.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.scrollController.hasClients) return;
+
+      final key = widget.keyForMessage(globalIndex);
+      final targetContext = key.currentContext;
+
+      if (targetContext == null) {
+        _jumpProportionally(globalIndex);
+        return;
+      }
+
+      final renderObject = targetContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) {
+        _jumpProportionally(globalIndex);
+        return;
+      }
+
+      final scrollableContext =
+          widget.scrollController.position.context.storageContext;
+      final scrollableRenderObject = scrollableContext.findRenderObject();
+      if (scrollableRenderObject is! RenderBox) {
+        _jumpProportionally(globalIndex);
+        return;
+      }
+
+      final targetOffsetInScrollable = renderObject.localToGlobal(
+        Offset.zero,
+        ancestor: scrollableRenderObject,
+      );
+
+      final currentScrollOffset = widget.scrollController.offset;
+      final absoluteTarget =
+          currentScrollOffset + targetOffsetInScrollable.dy;
+
+      final maxScroll = widget.scrollController.position.maxScrollExtent;
+
+      widget.scrollController.animateTo(
+        absoluteTarget.clamp(0.0, maxScroll),
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    });
+
+    setState(() => _showCard = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<int> turnIndices = [];
+    for (int i = 0; i < widget.messages.length; i++) {
+      if (widget.messages[i].isUser) {
+        turnIndices.add(i);
+      }
+    }
+
+    if (turnIndices.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final screenHeight = MediaQuery.of(context).size.height;
+    final availableHeight =
+        screenHeight - widget.topOffset - widget.bottomOffset;
+
+    if (availableHeight <= 40) {
+      return const SizedBox.shrink();
+    }
+
+    final int lastTurnGlobalIndex = turnIndices.last;
+
+    return Positioned(
+      right: 6,
+      top: widget.topOffset,
+      bottom: widget.bottomOffset,
+      child: MouseRegion(
+        onEnter: (_) => _openCard(),
+        onExit: (_) => _scheduleClose(),
+        child: SizedBox(
+          width: 46,
+          height: availableHeight,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ...turnIndices.asMap().entries.map((entry) {
+                final position = entry.key;
+                final globalIndex = entry.value;
+                final isActive = globalIndex == lastTurnGlobalIndex;
+
+                final top =
+                    turnIndices.length == 1
+                        ? (availableHeight / 2) - 3
+                        : (position / (turnIndices.length - 1)) *
+                            (availableHeight - 14);
+
+                return Positioned(
+                  top: top,
+                  right: 4,
+                  child: GestureDetector(
+                    onTap: () => _jumpTo(globalIndex),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 7,
+                          horizontal: 6,
+                        ),
+                        color: Colors.transparent,
+                        child: Container(
+                          width: isActive ? 26 : 20,
+                          height: isActive ? 5 : 3,
+                          decoration: BoxDecoration(
+                            color:
+                                isActive
+                                    ? Colors.orange
+                                    : Colors.blue.withAlpha(170),
+                            borderRadius: BorderRadius.circular(3),
+                            boxShadow:
+                                isActive
+                                    ? [
+                                      BoxShadow(
+                                        color: Colors.orange.withAlpha(140),
+                                        blurRadius: 5,
+                                      ),
+                                    ]
+                                    : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+
+              Positioned(
+                right: 50,
+                top: 0,
+                child: IgnorePointer(
+                  ignoring: !_showCard,
+                  child: AnimatedOpacity(
+                    opacity: _showCard ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 150),
+                    curve: Curves.easeOut,
+                    child: MouseRegion(
+                      onEnter: (_) => _openCard(),
+                      onExit: (_) => _scheduleClose(),
+                      child: Container(
+                        width: 230,
+                        constraints: BoxConstraints(
+                          maxHeight: availableHeight.clamp(120.0, 420.0),
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1A1A),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade700),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black54,
+                              blurRadius: 10,
+                              offset: Offset(-2, 2),
+                            ),
+                          ],
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: turnIndices.length,
+                          itemBuilder: (context, i) {
+                            final globalIndex = turnIndices[i];
+                            final isActive =
+                                globalIndex == lastTurnGlobalIndex;
+                            final preview = _shortPreview(
+                              widget.messages[globalIndex].text,
+                            );
+
+                            return InkWell(
+                              onTap: () => _jumpTo(globalIndex),
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 7,
+                                ),
+                                color:
+                                    isActive
+                                        ? Colors.orange.withAlpha(25)
+                                        : Colors.transparent,
+                                child: Text(
+                                  preview,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color:
+                                        isActive
+                                            ? Colors.orange
+                                            : Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight:
+                                        isActive
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
