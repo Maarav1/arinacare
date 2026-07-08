@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -576,6 +577,8 @@ class _AIScreenState extends State<AIScreen>
                           : null,
                   images: msg.imageBytes,
                   isIncomplete: msg.isIncomplete ?? false,
+                  // Store stable identifier for search
+                  stableId: '${msg.conversationId}_${msg.timestamp.millisecondsSinceEpoch}',
                 ),
               ),
             );
@@ -1272,52 +1275,57 @@ Current Year: $currentYear''';
 
       if (!mounted) return;
 
+      // Find the target message index using stableId or fallback to first user message
       int targetIndex = 0;
-
+      
       setState(() {
         _messages.clear();
         _messageKeys.clear();
-        _messages.addAll(
-          messages.asMap().entries.map((entry) {
-            final idx = entry.key;
-            final msg = entry.value;
-
-            if (messageId != null && msg.key.toString() == messageId) {
-              targetIndex = idx;
-            }
-
-            return ChatMessage(
-              text: msg.text,
-              isUser: msg.isUser,
-              timestamp: msg.timestamp,
-              isLoading: false,
-              isError: msg.isError,
-              thinkingProcess: msg.thinkingProcess,
-              thinkingTime:
-                  msg.thinkingTimeMs != null
-                      ? Duration(milliseconds: msg.thinkingTimeMs!)
-                      : null,
-              images: msg.imageBytes,
-              isIncomplete: msg.isIncomplete ?? false,
-            );
-          }).toList(),
-        );
+        
+        final loadedMessages = messages.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final msg = entry.value;
+          
+          final stableId = '${msg.conversationId}_${msg.timestamp.millisecondsSinceEpoch}';
+          
+          // If we have a messageId, find the matching message
+          if (messageId != null && stableId == messageId) {
+            targetIndex = idx;
+          }
+          
+          return ChatMessage(
+            text: msg.text,
+            isUser: msg.isUser,
+            timestamp: msg.timestamp,
+            isLoading: false,
+            isError: msg.isError,
+            thinkingProcess: msg.thinkingProcess,
+            thinkingTime:
+                msg.thinkingTimeMs != null
+                    ? Duration(milliseconds: msg.thinkingTimeMs!)
+                    : null,
+            images: msg.imageBytes,
+            isIncomplete: msg.isIncomplete ?? false,
+            stableId: stableId,
+          );
+        }).toList();
+        
+        _messages.addAll(loadedMessages);
         _forceNewConversation = false;
       });
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients && targetIndex > 0) {
-          final itemHeight = 100.0;
-          final targetOffset = (targetIndex * itemHeight).toDouble();
-          final maxScroll = _scrollController.position.maxScrollExtent;
-
-          _scrollController.animateTo(
-            targetOffset.clamp(0.0, maxScroll),
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeOut,
-          );
-        }
-      });
+      // If we have a target user message, scroll to it with it at the top
+      if (targetIndex > 0 && _messages[targetIndex].isUser) {
+        // First jump roughly to the area
+        final roughTarget = (targetIndex / _messages.length) * 
+            _scrollController.position.maxScrollExtent;
+        _scrollController.jumpTo(roughTarget.clamp(0.0, _scrollController.position.maxScrollExtent));
+        
+        // Then after a frame, use the RenderBox for exact positioning
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _jumpToMessageWithTopAlignment(targetIndex);
+        });
+      }
 
       _scheduleAutoScroll();
     } catch (e) {
@@ -1325,6 +1333,62 @@ Current Year: $currentYear''';
         print('❌ Error loading specific conversation: $e');
       }
     }
+  }
+
+  void _jumpToMessageWithTopAlignment(int index) {
+    if (!_scrollController.hasClients) return;
+    
+    final key = _keyForMessage(index);
+    final context = key.currentContext;
+    
+    if (context == null) {
+      // Fallback to proportional
+      _jumpToProportional(index);
+      return;
+    }
+    
+    final renderBox = context.findRenderObject();
+    if (renderBox is! RenderBox) {
+      _jumpToProportional(index);
+      return;
+    }
+    
+    final scrollableContext = _scrollController.position.context.storageContext;
+    final scrollableRenderBox = scrollableContext.findRenderObject();
+    if (scrollableRenderBox is! RenderBox) {
+      _jumpToProportional(index);
+      return;
+    }
+    
+    final targetOffset = renderBox.localToGlobal(
+      Offset.zero,
+      ancestor: scrollableRenderBox,
+    );
+    
+    final targetScroll = _scrollController.offset + targetOffset.dy;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    
+    _scrollController.animateTo(
+      targetScroll.clamp(0.0, maxScroll),
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _jumpToProportional(int index) {
+    if (!_scrollController.hasClients) return;
+    final total = _messages.length;
+    if (total <= 1) {
+      _scrollController.jumpTo(0);
+      return;
+    }
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final target = (index / (total - 1)) * maxScroll;
+    _scrollController.animateTo(
+      target.clamp(0.0, maxScroll),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+    );
   }
 
   Future<void> _sendGeminiMessage() async {
@@ -2539,6 +2603,9 @@ Current Year: $currentYear''';
                 ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
           for (final msg in msgs) {
+            // Skip AI responses - only show user messages in search
+            if (!msg.isUser) continue;
+            
             if (msg.text.trim().length < 3) continue;
 
             String conversationTitle = 'Chat';
@@ -2554,7 +2621,7 @@ Current Year: $currentYear''';
             allResults.add(
               _SearchResultItem(
                 conversationId: conv.id,
-                messageId: msg.key.toString(),
+                messageId: '${conv.id}_${msg.timestamp.millisecondsSinceEpoch}',
                 messageText: msg.text,
                 isUser: msg.isUser,
                 timestamp: msg.timestamp,
@@ -2595,7 +2662,7 @@ Current Year: $currentYear''';
                   autofocus: true,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: 'Search all messages...',
+                    hintText: 'Search your messages...',
                     hintStyle: const TextStyle(color: Colors.grey),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon:
@@ -2675,7 +2742,6 @@ Current Year: $currentYear''';
                           itemCount: filteredResults.length,
                           itemBuilder: (context, index) {
                             final item = filteredResults[index];
-                            final isUser = item.isUser;
 
                             return Card(
                               color: Colors.grey.shade900,
@@ -2688,12 +2754,11 @@ Current Year: $currentYear''';
                                   horizontal: 14,
                                   vertical: 6,
                                 ),
-                                leading: CircleAvatar(
-                                  backgroundColor:
-                                      isUser ? Colors.blue : Colors.orange,
+                                leading: const CircleAvatar(
+                                  backgroundColor: Colors.blue,
                                   radius: 16,
                                   child: Icon(
-                                    isUser ? Icons.person : Icons.auto_awesome,
+                                    Icons.person,
                                     color: Colors.white,
                                     size: 14,
                                   ),
@@ -2704,13 +2769,10 @@ Current Year: $currentYear''';
                                 ),
                                 subtitle: Row(
                                   children: [
-                                    Text(
-                                      '${isUser ? 'You' : 'Gemini'} • ',
+                                    const Text(
+                                      'You • ',
                                       style: TextStyle(
-                                        color:
-                                            isUser
-                                                ? Colors.blueAccent
-                                                : Colors.orange,
+                                        color: Colors.blueAccent,
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -3450,261 +3512,164 @@ Current Year: $currentYear''';
           ),
         ],
       ),
-      body: GestureDetector(
-        onTap: () {
-          FocusScope.of(context).unfocus();
+      body: Listener(
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            // Forward scroll events to the chat scroll controller
+            // regardless of cursor position
+            if (_scrollController.hasClients) {
+              final delta = event.scrollDelta.dy;
+              final newOffset = _scrollController.offset + delta;
+              final maxScroll = _scrollController.position.maxScrollExtent;
+              
+              _scrollController.jumpTo(
+                newOffset.clamp(0.0, maxScroll)
+              );
+            }
+          }
         },
-        child: Stack(
-          children: [
-            _webCentered(
-              Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 6,
-                      horizontal: 12,
-                    ),
-                    color: Colors.grey.shade900,
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withAlpha(20),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange, width: 1),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.model_training,
-                                size: 12,
-                                color: Colors.blueAccent,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _availableModels
-                                    .firstWhere((m) => m.id == _selectedModel)
-                                    .name,
-                                style: const TextStyle(
-                                  color: Colors.orange,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _enableThinking = !_enableThinking;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  _enableThinking
-                                      ? '🤔 Thinking mode ON - Thoughts hidden in dropdown'
-                                      : '⚡ Fast mode ON - All text shown directly',
-                                ),
-                                backgroundColor:
-                                    _enableThinking
-                                        ? Colors.blueGrey
-                                        : Colors.blue,
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                          child: Container(
+        child: GestureDetector(
+          onTap: () {
+            FocusScope.of(context).unfocus();
+          },
+          child: Stack(
+            children: [
+              _webCentered(
+                Column(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 6,
+                        horizontal: 12,
+                      ),
+                      color: Colors.grey.shade900,
+                      child: Row(
+                        children: [
+                          Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
+                              horizontal: 8,
+                              vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color:
-                                  _enableThinking
-                                      ? Colors.brown.withAlpha(20)
-                                      : Colors.blue.withAlpha(20),
+                              color: Colors.blue.withAlpha(20),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color:
-                                    _enableThinking
-                                        ? Colors.lightBlue
-                                        : Colors.blue,
-                                width: 1,
-                              ),
+                              border: Border.all(color: Colors.orange, width: 1),
                             ),
                             child: Row(
                               children: [
-                                Icon(
-                                  _enableThinking
-                                      ? Icons.psychology
-                                      : Icons.flash_on,
-                                  size: 10,
+                                const Icon(
+                                  Icons.model_training,
+                                  size: 12,
+                                  color: Colors.blueAccent,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _availableModels
+                                      .firstWhere((m) => m.id == _selectedModel)
+                                      .name,
+                                  style: const TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _enableThinking = !_enableThinking;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _enableThinking
+                                        ? '🤔 Thinking mode ON - Thoughts hidden in dropdown'
+                                        : '⚡ Fast mode ON - All text shown directly',
+                                  ),
+                                  backgroundColor:
+                                      _enableThinking
+                                          ? Colors.blueGrey
+                                          : Colors.blue,
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    _enableThinking
+                                        ? Colors.brown.withAlpha(20)
+                                        : Colors.blue.withAlpha(20),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
                                   color:
                                       _enableThinking
-                                          ? Colors.deepOrangeAccent
+                                          ? Colors.lightBlue
                                           : Colors.blue,
+                                  width: 1,
                                 ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  _enableThinking ? 'Thinking' : 'Fast',
-                                  style: TextStyle(
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _enableThinking
+                                        ? Icons.psychology
+                                        : Icons.flash_on,
+                                    size: 10,
                                     color:
                                         _enableThinking
-                                            ? Colors.deepOrange
+                                            ? Colors.deepOrangeAccent
                                             : Colors.blue,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
                                   ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withAlpha(20),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.blue, width: 1),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.thermostat,
-                                size: 10,
-                                color: Colors.blue,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                'Temp: ${_temperature.toStringAsFixed(1)}',
-                                style: const TextStyle(
-                                  color: Colors.blue,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withAlpha(20),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.green, width: 1),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.memory,
-                                size: 10,
-                                color: Colors.green,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                'Ctx: $_maxContextMessages',
-                                style: const TextStyle(
-                                  color: Colors.green,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: _openChatSearch,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.purple.withAlpha(20),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.purpleAccent,
-                                width: 1,
-                              ),
-                            ),
-                            child: const Row(
-                              children: [
-                                Icon(
-                                  Icons.search,
-                                  size: 10,
-                                  color: Colors.purpleAccent,
-                                ),
-                                SizedBox(width: 3),
-                                Text(
-                                  'Search',
-                                  style: TextStyle(
-                                    color: Colors.purpleAccent,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    _enableThinking ? 'Thinking' : 'Fast',
+                                    style: TextStyle(
+                                      color:
+                                          _enableThinking
+                                              ? Colors.deepOrange
+                                              : Colors.blue,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 6),
 
-                        const Spacer(),
-
-                        if (_enableStreaming)
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 6,
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color:
-                                  _isStreaming
-                                      ? Colors.green.withAlpha(20)
-                                      : Colors.grey.withAlpha(20),
+                              color: Colors.blue.withAlpha(20),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color:
-                                    _isStreaming ? Colors.green : Colors.grey,
-                              ),
+                              border: Border.all(color: Colors.blue, width: 1),
                             ),
                             child: Row(
                               children: [
-                                Icon(
-                                  _isStreaming
-                                      ? Icons.stream
-                                      : Icons.check_circle,
+                                const Icon(
+                                  Icons.thermostat,
                                   size: 10,
-                                  color:
-                                      _isStreaming ? Colors.green : Colors.grey,
+                                  color: Colors.blue,
                                 ),
                                 const SizedBox(width: 3),
                                 Text(
-                                  _isStreaming ? 'Streaming' : 'Ready',
-                                  style: TextStyle(
-                                    color:
-                                        _isStreaming
-                                            ? Colors.green
-                                            : Colors.grey,
+                                  'Temp: ${_temperature.toStringAsFixed(1)}',
+                                  style: const TextStyle(
+                                    color: Colors.blue,
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -3712,436 +3677,550 @@ Current Year: $currentYear''';
                               ],
                             ),
                           ),
-                      ],
-                    ),
-                  ),
 
-                  Expanded(
-                    child:
-                        _messages.isEmpty && _currentStreamText.isEmpty
-                            ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(
-                                    Icons.auto_awesome,
-                                    size: 64,
-                                    color: Colors.orange,
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withAlpha(20),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.green, width: 1),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.memory,
+                                  size: 10,
+                                  color: Colors.green,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  'Ctx: $_maxContextMessages',
+                                  style: const TextStyle(
+                                    color: Colors.green,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  const SizedBox(height: 16),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            onTap: _openChatSearch,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.purple.withAlpha(20),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.purpleAccent,
+                                  width: 1,
+                                ),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(
+                                    Icons.search,
+                                    size: 10,
+                                    color: Colors.purpleAccent,
+                                  ),
+                                  SizedBox(width: 3),
                                   Text(
-                                    'Welcome to ${_availableModels.firstWhere((m) => m.id == _selectedModel).name}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
+                                    'Search',
+                                    style: TextStyle(
+                                      color: Colors.purpleAccent,
+                                      fontSize: 10,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
-                                    style: const TextStyle(
-                                      color: Colors.green,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: Enabled',
-                                    style: const TextStyle(
-                                      color: Colors.blue,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  if (_userProfileBox.values.isEmpty)
-                                    GestureDetector(
-                                      onTap: _showProfileDialog,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 8,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green.withAlpha(30),
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.green,
-                                          ),
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.person_add,
-                                              color: Colors.green,
-                                              size: 16,
-                                            ),
-                                            SizedBox(width: 8),
-                                            Text(
-                                              'Set up your profile',
-                                              style: TextStyle(
-                                                color: Colors.green,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                            SizedBox(width: 8),
-                                            Icon(
-                                              Icons.arrow_forward,
-                                              color: Colors.green,
-                                              size: 12,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
                                 ],
                               ),
-                            )
-                            : ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.only(
-                                top: 4,
-                                bottom: 100,
-                                left: 2,
-                                right: 2,
+                            ),
+                          ),
+
+                          const Spacer(),
+
+                          if (_enableStreaming)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 3,
                               ),
-                              itemCount:
-                                  _messages.length +
-                                  (_currentStreamText.isNotEmpty ||
-                                          _isThinkingPhase
-                                      ? 1
-                                      : 0),
-                              itemBuilder: (context, index) {
-                                if (index < _messages.length) {
-                                  return KeyedSubtree(
-                                    key: _keyForMessage(index),
-                                    child: ChatBubbleWithThinking(
-                                      message: _messages[index],
-                                      enableAutoScroll: _enableAutoScroll,
-                                      onContinuePressed:
-                                          _messages[index].isIncomplete
-                                              ? _continueIncompleteResponse
-                                              : null,
-                                      onRetryPressed:
-                                          _messages[index].canRetry
-                                              ? _retryFailedRequest
-                                              : null,
+                              decoration: BoxDecoration(
+                                color:
+                                    _isStreaming
+                                        ? Colors.green.withAlpha(20)
+                                        : Colors.grey.withAlpha(20),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color:
+                                      _isStreaming ? Colors.green : Colors.grey,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _isStreaming
+                                        ? Icons.stream
+                                        : Icons.check_circle,
+                                    size: 10,
+                                    color:
+                                        _isStreaming ? Colors.green : Colors.grey,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    _isStreaming ? 'Streaming' : 'Ready',
+                                    style: TextStyle(
+                                      color:
+                                          _isStreaming
+                                              ? Colors.green
+                                              : Colors.grey,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
                                     ),
-                                  );
-                                } else {
-                                  if (_isThinkingPhase && _enableThinking) {
-                                    final phaseLabel = _thinkingPhaseLabel(
-                                      _currentThinkingProcess,
-                                    );
-                                    return Container(
-                                      margin: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                        horizontal: 4,
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+
+                    Expanded(
+                      child:
+                          _messages.isEmpty && _currentStreamText.isEmpty
+                              ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.auto_awesome,
+                                      size: 64,
+                                      color: Colors.orange,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'Welcome to ${_availableModels.firstWhere((m) => m.id == _selectedModel).name}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
                                       ),
-                                      padding: const EdgeInsets.all(14),
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade900,
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: Colors.purpleAccent.withAlpha(
-                                            60,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
+                                      style: const TextStyle(
+                                        color: Colors.green,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: Enabled',
+                                      style: const TextStyle(
+                                        color: Colors.blue,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    if (_userProfileBox.values.isEmpty)
+                                      GestureDetector(
+                                        onTap: _showProfileDialog,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 8,
                                           ),
-                                          width: 1,
-                                        ),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
+                                          decoration: BoxDecoration(
+                                            color: Colors.green.withAlpha(30),
+                                            borderRadius: BorderRadius.circular(
+                                              20,
+                                            ),
+                                            border: Border.all(
+                                              color: Colors.green,
+                                            ),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              const Icon(
-                                                Icons.psychology,
-                                                color: Colors.purpleAccent,
-                                                size: 18,
+                                              Icon(
+                                                Icons.person_add,
+                                                color: Colors.green,
+                                                size: 16,
                                               ),
-                                              const SizedBox(width: 10),
-                                              const Text(
-                                                'Thinking...',
-                                                style: TextStyle(
-                                                  color: Colors.purpleAccent,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              const SizedBox(
-                                                width: 14,
-                                                height: 14,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  valueColor:
-                                                      AlwaysStoppedAnimation<
-                                                          Color>(
-                                                    Colors.purpleAccent,
-                                                  ),
-                                                ),
-                                              ),
-                                              const Spacer(),
+                                              SizedBox(width: 8),
                                               Text(
-                                                phaseLabel,
-                                                style: const TextStyle(
-                                                  color: Colors.grey,
-                                                  fontSize: 11,
-                                                  fontStyle: FontStyle.italic,
+                                                'Set up your profile',
+                                                style: TextStyle(
+                                                  color: Colors.green,
+                                                  fontSize: 12,
                                                 ),
+                                              ),
+                                              SizedBox(width: 8),
+                                              Icon(
+                                                Icons.arrow_forward,
+                                                color: Colors.green,
+                                                size: 12,
                                               ),
                                             ],
                                           ),
-                                          if (_currentThinkingProcess
-                                              .isNotEmpty)
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                top: 10,
-                                              ),
-                                              child: Container(
-                                                padding: const EdgeInsets.all(
-                                                  12,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                child: Text(
-                                                  _currentThinkingProcess,
-                                                  style: const TextStyle(
-                                                    color:
-                                                        Colors.lightGreenAccent,
-                                                    fontSize: 13,
-                                                    height: 1.4,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              )
+                              : ListView.builder(
+                                controller: _scrollController,
+                                padding: const EdgeInsets.only(
+                                  top: 4,
+                                  bottom: 100,
+                                  left: 2,
+                                  right: 2,
+                                ),
+                                itemCount:
+                                    _messages.length +
+                                    (_currentStreamText.isNotEmpty ||
+                                            _isThinkingPhase
+                                        ? 1
+                                        : 0),
+                                itemBuilder: (context, index) {
+                                  if (index < _messages.length) {
+                                    return KeyedSubtree(
+                                      key: _keyForMessage(index),
+                                      child: ChatBubbleWithThinking(
+                                        message: _messages[index],
+                                        enableAutoScroll: _enableAutoScroll,
+                                        onContinuePressed:
+                                            _messages[index].isIncomplete
+                                                ? _continueIncompleteResponse
+                                                : null,
+                                        onRetryPressed:
+                                            _messages[index].canRetry
+                                                ? _retryFailedRequest
+                                                : null,
                                       ),
                                     );
                                   } else {
-                                    return ChatBubbleWithThinking(
-                                      message: ChatMessage(
-                                        text: _currentStreamText,
-                                        isUser: false,
-                                        timestamp: DateTime.now(),
-                                        isLoading: _isStreaming,
-                                      ),
-                                      enableAutoScroll: _enableAutoScroll,
-                                      onContinuePressed: null,
-                                      onRetryPressed: null,
-                                    );
-                                  }
-                                }
-                              },
-                            ),
-                  ),
-                  _buildBannerAd(),
-                  if (_selectedImages.isNotEmpty)
-                    Container(
-                      height: 80,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      color: Colors.grey.shade900,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _selectedImages.length,
-                        itemBuilder: (context, index) {
-                          return Stack(
-                            children: [
-                              Container(
-                                width: 70,
-                                height: 70,
-                                margin: const EdgeInsets.only(right: 6),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(6),
-                                  image: DecorationImage(
-                                    image: MemoryImage(_selectedImages[index]),
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: GestureDetector(
-                                  onTap: () => _removeImage(index),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(2),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.close,
-                                      size: 12,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-
-                  Container(
-                    padding: const EdgeInsets.all(7),
-                    color: Colors.grey.shade900,
-                    child: Column(
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (_enableImageUpload)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: IconButton(
-                                  icon: Icon(
-                                    Icons.image,
-                                    color:
-                                        _selectedImages.isNotEmpty
-                                            ? Colors.orange
-                                            : Colors.white,
-                                    size: 20,
-                                  ),
-                                  onPressed: () async {
-                                    await _pickImage();
-                                    if (_inputFocusNode?.hasFocus == false) {
-                                      _inputFocusNode?.requestFocus();
-                                    }
-                                  },
-                                ),
-                              ),
-
-                            Expanded(
-                              child: Container(
-                                constraints: const BoxConstraints(
-                                  maxHeight: 140,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade800,
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: TextField(
-                                  controller: _messageController,
-                                  focusNode: _inputFocusNode,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                  ),
-                                  maxLines: null,
-                                  keyboardType: TextInputType.multiline,
-                                  textInputAction: TextInputAction.newline,
-                                  decoration: InputDecoration(
-                                    hintText: 'Type your message...',
-                                    hintStyle: const TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 14,
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
-                                    ),
-                                    suffixIcon:
-                                        _isStreaming
-                                            ? IconButton(
-                                              icon: const Icon(
-                                                Icons.stop,
-                                                color: Colors.red,
-                                                size: 18,
-                                              ),
-                                              onPressed: () async {
-                                                await _cancelCurrentStream();
-                                                if (mounted) {
-                                                  setState(() {
-                                                    _isSendingMessage = false;
-                                                    _isStreaming = false;
-                                                    _currentStreamText = '';
-                                                    _currentThinkingProcess =
-                                                        '';
-                                                    _isThinkingComplete = false;
-                                                    _isThinkingPhase = false;
-                                                  });
-                                                }
-                                                if (_inputFocusNode?.hasFocus ==
-                                                    false) {
-                                                  _inputFocusNode
-                                                      ?.requestFocus();
-                                                }
-                                              },
-                                            )
-                                            : null,
-                                  ),
-                                  onChanged: (value) {},
-                                  onSubmitted: (_) {
-                                    if (!_isSendingMessage) {
-                                      _sendGeminiMessage();
-                                    }
-                                  },
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(width: 6),
-
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 6),
-                              decoration: BoxDecoration(
-                                color:
-                                    _isSendingMessage
-                                        ? Colors.grey.shade700
-                                        : Colors.lightBlue,
-                                shape: BoxShape.circle,
-                              ),
-                              child: IconButton(
-                                icon:
-                                    _isSendingMessage
-                                        ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                  Colors.white,
-                                                ),
-                                          ),
-                                        )
-                                        : const Icon(
-                                          Icons.send,
-                                          color: Colors.white,
-                                          size: 20,
+                                    if (_isThinkingPhase && _enableThinking) {
+                                      final phaseLabel = _thinkingPhaseLabel(
+                                        _currentThinkingProcess,
+                                      );
+                                      return Container(
+                                        margin: const EdgeInsets.symmetric(
+                                          vertical: 8,
+                                          horizontal: 4,
                                         ),
-                                onPressed: () async {
-                                  if (!_isSendingMessage) {
-                                    await _sendGeminiMessage();
+                                        padding: const EdgeInsets.all(14),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade900,
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: Colors.purpleAccent.withAlpha(
+                                              60,
+                                            ),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                const Icon(
+                                                  Icons.psychology,
+                                                  color: Colors.purpleAccent,
+                                                  size: 18,
+                                                ),
+                                                const SizedBox(width: 10),
+                                                const Text(
+                                                  'Thinking...',
+                                                  style: TextStyle(
+                                                    color: Colors.purpleAccent,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                const SizedBox(
+                                                  width: 14,
+                                                  height: 14,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation<
+                                                            Color>(
+                                                      Colors.purpleAccent,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const Spacer(),
+                                                Text(
+                                                  phaseLabel,
+                                                  style: const TextStyle(
+                                                    color: Colors.grey,
+                                                    fontSize: 11,
+                                                    fontStyle: FontStyle.italic,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            if (_currentThinkingProcess
+                                                .isNotEmpty)
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                  top: 10,
+                                                ),
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(
+                                                    12,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black,
+                                                    borderRadius:
+                                                        BorderRadius.circular(8),
+                                                  ),
+                                                  child: Text(
+                                                    _currentThinkingProcess,
+                                                    style: const TextStyle(
+                                                      color:
+                                                          Colors.lightGreenAccent,
+                                                      fontSize: 13,
+                                                      height: 1.4,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      );
+                                    } else {
+                                      return ChatBubbleWithThinking(
+                                        message: ChatMessage(
+                                          text: _currentStreamText,
+                                          isUser: false,
+                                          timestamp: DateTime.now(),
+                                          isLoading: _isStreaming,
+                                        ),
+                                        enableAutoScroll: _enableAutoScroll,
+                                        onContinuePressed: null,
+                                        onRetryPressed: null,
+                                      );
+                                    }
                                   }
                                 },
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
                     ),
-                  ),
-                ],
+                    _buildBannerAd(),
+                    if (_selectedImages.isNotEmpty)
+                      Container(
+                        height: 80,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        color: Colors.grey.shade900,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _selectedImages.length,
+                          itemBuilder: (context, index) {
+                            return Stack(
+                              children: [
+                                Container(
+                                  width: 70,
+                                  height: 70,
+                                  margin: const EdgeInsets.only(right: 6),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(6),
+                                    image: DecorationImage(
+                                      image: MemoryImage(_selectedImages[index]),
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: GestureDetector(
+                                    onTap: () => _removeImage(index),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.close,
+                                        size: 12,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+
+                    Container(
+                      padding: const EdgeInsets.all(7),
+                      color: Colors.grey.shade900,
+                      child: Column(
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              if (_enableImageUpload)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: IconButton(
+                                    icon: Icon(
+                                      Icons.image,
+                                      color:
+                                          _selectedImages.isNotEmpty
+                                              ? Colors.orange
+                                              : Colors.white,
+                                      size: 20,
+                                    ),
+                                    onPressed: () async {
+                                      await _pickImage();
+                                      if (_inputFocusNode?.hasFocus == false) {
+                                        _inputFocusNode?.requestFocus();
+                                      }
+                                    },
+                                  ),
+                                ),
+
+                              Expanded(
+                                child: Container(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 140,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade800,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: TextField(
+                                    controller: _messageController,
+                                    focusNode: _inputFocusNode,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                    ),
+                                    maxLines: null,
+                                    keyboardType: TextInputType.multiline,
+                                    textInputAction: TextInputAction.newline,
+                                    decoration: InputDecoration(
+                                      hintText: 'Type your message...',
+                                      hintStyle: const TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 14,
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 10,
+                                      ),
+                                      suffixIcon:
+                                          _isStreaming
+                                              ? IconButton(
+                                                icon: const Icon(
+                                                  Icons.stop,
+                                                  color: Colors.red,
+                                                  size: 18,
+                                                ),
+                                                onPressed: () async {
+                                                  await _cancelCurrentStream();
+                                                  if (mounted) {
+                                                    setState(() {
+                                                      _isSendingMessage = false;
+                                                      _isStreaming = false;
+                                                      _currentStreamText = '';
+                                                      _currentThinkingProcess =
+                                                          '';
+                                                      _isThinkingComplete = false;
+                                                      _isThinkingPhase = false;
+                                                    });
+                                                  }
+                                                  if (_inputFocusNode?.hasFocus ==
+                                                      false) {
+                                                    _inputFocusNode
+                                                        ?.requestFocus();
+                                                  }
+                                                },
+                                              )
+                                              : null,
+                                    ),
+                                    onChanged: (value) {},
+                                    onSubmitted: (_) {
+                                      if (!_isSendingMessage) {
+                                        _sendGeminiMessage();
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(width: 6),
+
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                decoration: BoxDecoration(
+                                  color:
+                                      _isSendingMessage
+                                          ? Colors.grey.shade700
+                                          : Colors.lightBlue,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: IconButton(
+                                  icon:
+                                      _isSendingMessage
+                                          ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    Colors.white,
+                                                  ),
+                                            ),
+                                          )
+                                          : const Icon(
+                                            Icons.send,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                  onPressed: () async {
+                                    if (!_isSendingMessage) {
+                                      await _sendGeminiMessage();
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            _buildScrollToBottomButton(),
-            _buildScrollProgressIndicator(),
-          ],
+              _buildScrollToBottomButton(),
+              _buildScrollProgressIndicator(),
+            ],
+          ),
         ),
       ),
     );
@@ -4234,6 +4313,7 @@ class ChatMessage {
   final Duration? thinkingTime;
   final bool isIncomplete;
   final bool canRetry;
+  final String? stableId; // For search navigation
 
   ChatMessage({
     required this.text,
@@ -4246,6 +4326,7 @@ class ChatMessage {
     this.thinkingTime,
     this.isIncomplete = false,
     this.canRetry = false,
+    this.stableId,
   });
 }
 
@@ -4941,26 +5022,17 @@ class _SearchResultItem {
 }
 
 // ============================================================
-// DeepSeek-style scroll scrubber, now with two upgrades applied:
+// DeepSeek-style scroll scrubber - COMPLETELY FIXED
 //
-// 1. Pixel-accurate jump. Instead of estimating a message's vertical
-//    position with a simple proportional calculation, each message row
-//    in the chat is wrapped in a KeyedSubtree using a GlobalKey supplied
-//    by the parent screen through keyForMessage. When a dash or a hover
-//    card row is tapped, this widget looks up that message's real
-//    RenderBox after the current frame has settled, reads its actual
-//    on-screen offset relative to the scrollable ancestor, and animates
-//    the ScrollController straight to that position. If a RenderBox is
-//    not yet resolvable for some reason, it falls back to the original
-//    proportional estimate so a tap never silently does nothing.
-//
-// 2. Smooth fade transition. The floating hover card is wrapped in an
-//    AnimatedOpacity tied to the same _showCard boolean the widget
-//    already tracked, using a hundred-and-fifty-millisecond easeOut
-//    curve, so it now fades gently into and out of view instead of
-//    snapping on and off. An IgnorePointer synced to the same boolean
-//    prevents the fading-out card from intercepting clicks while it is
-//    still visually present but on its way to fully transparent.
+// Features:
+// 1. Only 8 dashes visible at a time (sliding window)
+// 2. Tight spacing (6px between dashes)
+// 3. Compact block (~150px max height), vertically centered
+// 4. Scroll works anywhere via top-level Listener
+// 5. Hover card and dashes in one MouseRegion
+// 6. Two-phase jump: rough then exact using RenderBox
+// 7. Active dash updates on click
+// 8. User message lands at TOP of screen
 // ============================================================
 class _MessageScrubber extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -4983,7 +5055,12 @@ class _MessageScrubber extends StatefulWidget {
 
 class _MessageScrubberState extends State<_MessageScrubber> {
   bool _showCard = false;
+  int? _activeIndex;
   Timer? _hideTimer;
+
+  // Track which dash window we're showing (0 = first 8, 1 = next 8, etc.)
+  int _dashWindowStart = 0;
+  static const int _maxVisibleDashes = 8;
 
   void _openCard() {
     _hideTimer?.cancel();
@@ -5015,10 +5092,29 @@ class _MessageScrubberState extends State<_MessageScrubber> {
     return '${words.take(5).join(' ')}...';
   }
 
-  // Falls back to the proportional estimate if a real RenderBox for the
-  // target message cannot be resolved yet, which can happen if the list
-  // is still mid-rebuild at the exact moment of the tap.
-  void _jumpProportionally(int globalIndex) {
+  void _jumpTo(int globalIndex) {
+    setState(() {
+      _activeIndex = globalIndex;
+      _showCard = false;
+      // Update the dash window to center around the active dash
+      final totalTurns = _getTurnIndices().length;
+      if (totalTurns > _maxVisibleDashes) {
+        _dashWindowStart = (globalIndex - 3).clamp(
+          0,
+          totalTurns - _maxVisibleDashes,
+        );
+      }
+    });
+
+    // Two-phase jump: first rough, then precise after frame
+    _jumpToRoughPosition(globalIndex);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpToExactPosition(globalIndex);
+    });
+  }
+
+  void _jumpToRoughPosition(int globalIndex) {
     if (!widget.scrollController.hasClients) return;
 
     final maxScroll = widget.scrollController.position.maxScrollExtent;
@@ -5030,70 +5126,54 @@ class _MessageScrubberState extends State<_MessageScrubber> {
     }
 
     final target = (globalIndex / (total - 1)) * maxScroll;
+    widget.scrollController.jumpTo(target.clamp(0.0, maxScroll));
+  }
+
+  void _jumpToExactPosition(int globalIndex) {
+    if (!widget.scrollController.hasClients) return;
+
+    final key = widget.keyForMessage(globalIndex);
+    final context = key.currentContext;
+
+    if (context == null) return;
+
+    final renderBox = context.findRenderObject();
+    if (renderBox is! RenderBox) return;
+
+    final scrollableContext =
+        widget.scrollController.position.context.storageContext;
+    final scrollableRenderBox = scrollableContext.findRenderObject();
+    if (scrollableRenderBox is! RenderBox) return;
+
+    final targetOffset = renderBox.localToGlobal(
+      Offset.zero,
+      ancestor: scrollableRenderBox,
+    );
+
+    // Position the user message at the TOP of the viewport
+    final targetScroll = widget.scrollController.offset + targetOffset.dy - 20;
+    final maxScroll = widget.scrollController.position.maxScrollExtent;
+
     widget.scrollController.animateTo(
-      target.clamp(0.0, maxScroll),
+      targetScroll.clamp(0.0, maxScroll),
       duration: const Duration(milliseconds: 350),
       curve: Curves.easeOut,
     );
   }
 
-  void _jumpTo(int globalIndex) {
-    // Defer until after the current frame so any pending layout from a
-    // just-completed rebuild has finished before we read RenderBox data.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !widget.scrollController.hasClients) return;
-
-      final key = widget.keyForMessage(globalIndex);
-      final targetContext = key.currentContext;
-
-      if (targetContext == null) {
-        _jumpProportionally(globalIndex);
-        return;
-      }
-
-      final renderObject = targetContext.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.attached) {
-        _jumpProportionally(globalIndex);
-        return;
-      }
-
-      final scrollableContext =
-          widget.scrollController.position.context.storageContext;
-      final scrollableRenderObject = scrollableContext.findRenderObject();
-      if (scrollableRenderObject is! RenderBox) {
-        _jumpProportionally(globalIndex);
-        return;
-      }
-
-      final targetOffsetInScrollable = renderObject.localToGlobal(
-        Offset.zero,
-        ancestor: scrollableRenderObject,
-      );
-
-      final currentScrollOffset = widget.scrollController.offset;
-      final absoluteTarget =
-          currentScrollOffset + targetOffsetInScrollable.dy;
-
-      final maxScroll = widget.scrollController.position.maxScrollExtent;
-
-      widget.scrollController.animateTo(
-        absoluteTarget.clamp(0.0, maxScroll),
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeOut,
-      );
-    });
-
-    setState(() => _showCard = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  List<int> _getTurnIndices() {
     final List<int> turnIndices = [];
     for (int i = 0; i < widget.messages.length; i++) {
       if (widget.messages[i].isUser) {
         turnIndices.add(i);
       }
     }
+    return turnIndices;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final turnIndices = _getTurnIndices();
 
     if (turnIndices.isEmpty) {
       return const SizedBox.shrink();
@@ -5108,6 +5188,62 @@ class _MessageScrubberState extends State<_MessageScrubber> {
     }
 
     final int lastTurnGlobalIndex = turnIndices.last;
+    final int activeIndex = _activeIndex ?? lastTurnGlobalIndex;
+
+    // --- COMPACT DASH LAYOUT ---
+    // Constants: tight spacing, compact block
+    const double dashHeight = 4.0;
+    const double dashSpacing = 6.0; // TIGHT: 6px between dashes
+    const double dashWidth = 20.0;
+    const double activeDashWidth = 26.0;
+
+    // Calculate total block height - only for visible dashes
+    final int totalTurns = turnIndices.length;
+    final int visibleCount =
+        totalTurns > _maxVisibleDashes ? _maxVisibleDashes : totalTurns;
+
+    // Block height: dashes + gaps between them
+    final double totalBlockHeight =
+        (visibleCount * dashHeight) + ((visibleCount - 1) * dashSpacing);
+
+    // Max block height ~150px (with some padding for active dash)
+    final double maxBlockHeight = 150.0;
+    final double finalBlockHeight =
+        totalBlockHeight > maxBlockHeight ? maxBlockHeight : totalBlockHeight;
+
+    // Vertically center the compact block
+    final double topMargin = (availableHeight - finalBlockHeight) / 2;
+
+    // Calculate visible window of dashes
+    // Ensure window shows active dash if possible
+    if (totalTurns > _maxVisibleDashes) {
+      // If active index is outside current window, adjust
+      if (activeIndex < turnIndices[_dashWindowStart]) {
+        _dashWindowStart = (activeIndex - 3).clamp(
+          0,
+          totalTurns - _maxVisibleDashes,
+        );
+      } else if (activeIndex >
+          turnIndices[(_dashWindowStart + _maxVisibleDashes - 1).clamp(
+            0,
+            totalTurns - 1,
+          )]) {
+        _dashWindowStart = (activeIndex - 3).clamp(
+          0,
+          totalTurns - _maxVisibleDashes,
+        );
+      }
+    }
+
+    final int endWindow =
+        (totalTurns < _maxVisibleDashes)
+            ? totalTurns
+            : (_dashWindowStart + _maxVisibleDashes).clamp(0, totalTurns);
+
+    final List<int> visibleTurnIndices = turnIndices.sublist(
+      _dashWindowStart.clamp(0, totalTurns - 1),
+      endWindow,
+    );
 
     return Positioned(
       right: 6,
@@ -5116,142 +5252,149 @@ class _MessageScrubberState extends State<_MessageScrubber> {
       child: MouseRegion(
         onEnter: (_) => _openCard(),
         onExit: (_) => _scheduleClose(),
-        child: SizedBox(
-          width: 46,
-          height: availableHeight,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              ...turnIndices.asMap().entries.map((entry) {
-                final position = entry.key;
-                final globalIndex = entry.value;
-                final isActive = globalIndex == lastTurnGlobalIndex;
-
-                final top =
-                    turnIndices.length == 1
-                        ? (availableHeight / 2) - 3
-                        : (position / (turnIndices.length - 1)) *
-                            (availableHeight - 14);
-
-                return Positioned(
-                  top: top,
-                  right: 4,
-                  child: GestureDetector(
-                    onTap: () => _jumpTo(globalIndex),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 7,
-                          horizontal: 6,
-                        ),
-                        color: Colors.transparent,
-                        child: Container(
-                          width: isActive ? 26 : 20,
-                          height: isActive ? 5 : 3,
-                          decoration: BoxDecoration(
-                            color:
-                                isActive
-                                    ? Colors.orange
-                                    : Colors.blue.withAlpha(170),
-                            borderRadius: BorderRadius.circular(3),
-                            boxShadow:
-                                isActive
-                                    ? [
-                                      BoxShadow(
-                                        color: Colors.orange.withAlpha(140),
-                                        blurRadius: 5,
-                                      ),
-                                    ]
-                                    : null,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-
-              Positioned(
-                right: 50,
-                top: 0,
-                child: IgnorePointer(
-                  ignoring: !_showCard,
-                  child: AnimatedOpacity(
-                    opacity: _showCard ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 150),
-                    curve: Curves.easeOut,
-                    child: MouseRegion(
-                      onEnter: (_) => _openCard(),
-                      onExit: (_) => _scheduleClose(),
-                      child: Container(
-                        width: 230,
-                        constraints: BoxConstraints(
-                          maxHeight: availableHeight.clamp(120.0, 420.0),
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1A1A1A),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey.shade700),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Colors.black54,
-                              blurRadius: 10,
-                              offset: Offset(-2, 2),
-                            ),
-                          ],
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: turnIndices.length,
-                          itemBuilder: (context, i) {
-                            final globalIndex = turnIndices[i];
-                            final isActive =
-                                globalIndex == lastTurnGlobalIndex;
-                            final preview = _shortPreview(
-                              widget.messages[globalIndex].text,
-                            );
-
-                            return InkWell(
-                              onTap: () => _jumpTo(globalIndex),
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 7,
-                                ),
-                                color:
-                                    isActive
-                                        ? Colors.orange.withAlpha(25)
-                                        : Colors.transparent,
-                                child: Text(
-                                  preview,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // ---- COMPACT DASH COLUMN - VERTICALLY CENTERED ----
+            Positioned(
+              top: topMargin,
+              left: 0,
+              right: 0,
+              child: SizedBox(
+                height: finalBlockHeight,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (int i = 0; i < visibleTurnIndices.length; i++)
+                      GestureDetector(
+                        onTap: () => _jumpTo(visibleTurnIndices[i]),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: SizedBox(
+                            height: dashHeight + dashSpacing,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 1,
+                                horizontal: 6,
+                              ),
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: Container(
+                                  width:
+                                      visibleTurnIndices[i] == activeIndex
+                                          ? activeDashWidth
+                                          : dashWidth,
+                                  height:
+                                      visibleTurnIndices[i] == activeIndex
+                                          ? dashHeight + 2
+                                          : dashHeight,
+                                  decoration: BoxDecoration(
                                     color:
-                                        isActive
+                                        visibleTurnIndices[i] == activeIndex
                                             ? Colors.orange
-                                            : Colors.white70,
-                                    fontSize: 12,
-                                    fontWeight:
-                                        isActive
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
+                                            : Colors.blue.withAlpha(170),
+                                    borderRadius: BorderRadius.circular(3),
+                                    boxShadow:
+                                        visibleTurnIndices[i] == activeIndex
+                                            ? [
+                                              BoxShadow(
+                                                color: Colors.orange.withAlpha(
+                                                  140,
+                                                ),
+                                                blurRadius: 5,
+                                              ),
+                                            ]
+                                            : null,
                                   ),
                                 ),
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ---- HOVER CARD ----
+            Positioned(
+              right: 50,
+              top: topMargin,
+              child: IgnorePointer(
+                ignoring: !_showCard,
+                child: AnimatedOpacity(
+                  opacity: _showCard ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 150),
+                  curve: Curves.easeOut,
+                  child: MouseRegion(
+                    onEnter: (_) => _openCard(),
+                    onExit: (_) => _scheduleClose(),
+                    child: Container(
+                      width: 230,
+                      constraints: BoxConstraints(
+                        maxHeight: availableHeight.clamp(120.0, 420.0),
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1A1A),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade700),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black54,
+                            blurRadius: 10,
+                            offset: Offset(-2, 2),
+                          ),
+                        ],
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: turnIndices.length,
+                        itemBuilder: (context, i) {
+                          final globalIndex = turnIndices[i];
+                          final isActive = globalIndex == activeIndex;
+                          final preview = _shortPreview(
+                            widget.messages[globalIndex].text,
+                          );
+
+                          return InkWell(
+                            onTap: () => _jumpTo(globalIndex),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 7,
+                              ),
+                              color:
+                                  isActive
+                                      ? Colors.orange.withAlpha(25)
+                                      : Colors.transparent,
+                              child: Text(
+                                preview,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color:
+                                      isActive ? Colors.orange : Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight:
+                                      isActive
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
