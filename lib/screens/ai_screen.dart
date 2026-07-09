@@ -99,11 +99,27 @@ class _AIScreenState extends State<AIScreen>
       isRecommended: false,
     ),
     GeminiModel(
-      id: 'gemini-3-flash-preview',
-      name: 'Gemini 3 Flash Preview',
-      description: 'PhD-level reasoning',
-      priority: 'Newest Frontier',
-      bestFor: 'Latest model',
+      id: 'gemini-3.5-flash',
+      name: 'Gemini 3.5 Flash',
+      description: 'Frontier-class performance at Flash speeds',
+      priority: 'Recommended',
+      bestFor: 'Most applications and agentic workflows',
+      isRecommended: true,
+    ),
+    GeminiModel(
+      id: 'gemini-3.1-pro-preview',
+      name: 'Gemini 3.1 Pro (Preview)',
+      description: 'Advanced reasoning and complex problem-solving',
+      priority: 'High Reasoning',
+      bestFor: 'Advanced coding and multi-step reasoning',
+      isRecommended: false,
+    ),
+    GeminiModel(
+      id: 'gemini-3.1-flash-lite',
+      name: 'Gemini 3.1 Flash-Lite',
+      description: 'Ultra-fast and cost-sensitive workhorse',
+      priority: 'High Throughput',
+      bestFor: 'High-volume, low-latency background tasks',
       isRecommended: false,
     ),
   ];
@@ -119,15 +135,15 @@ class _AIScreenState extends State<AIScreen>
     AIPlatform(
       name: 'Gemini API',
       url: 'gemini://api',
-      icon: Icons.auto_awesome,
-      color: Colors.orange,
+      icon: Icons.auto_awesome, // Keep this
+      color: Colors.orange, // Keep this
       description: 'Google\'s AI (Direct API)',
     ),
     AIPlatform(
       name: 'Gemini Web',
       url: 'https://gemini.google.com/',
       icon: Icons.language,
-      color: Colors.blue,
+      color: Colors.blue, // Changed from Colors.orange to avoid duplicate
       description: 'Google Gemini Web Version',
     ),
     AIPlatform(
@@ -184,10 +200,90 @@ class _AIScreenState extends State<AIScreen>
   // read that message's real on-screen position after layout instead of
   // guessing based on a proportional average, which is what makes the
   // pixel-accurate jump described below possible.
-  final Map<int, GlobalKey> _messageKeys = {};
+  final Map<String, GlobalKey> _messageKeys = {};
 
-  GlobalKey _keyForMessage(int index) {
-    return _messageKeys.putIfAbsent(index, () => GlobalKey());
+  String _stableHiveMessageId(String conversationId, ChatMessageHive msg) {
+    final role = msg.isUser ? 'u' : 'a';
+    return '$conversationId-${msg.timestamp.microsecondsSinceEpoch}-$role';
+  }
+
+  GlobalKey _keyForMessage(ChatMessage message) {
+    return _messageKeys.putIfAbsent(message.id, () => GlobalKey());
+  }
+
+  GlobalKey _keyForMessageIndex(int index) {
+    return _keyForMessage(_messages[index]);
+  }
+
+  double _estimatedOffsetForIndex(int index) {
+    if (!_scrollController.hasClients || _messages.length <= 1) return 0.0;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    return ((index / (_messages.length - 1)) * maxScroll)
+        .clamp(0.0, maxScroll)
+        .toDouble();
+  }
+
+  Future<void> _jumpToMessageIndexExact(int index) async {
+    if (!_scrollController.hasClients ||
+        index < 0 ||
+        index >= _messages.length) {
+      return;
+    }
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+
+    _scrollController.jumpTo(
+      _estimatedOffsetForIndex(index).clamp(0.0, maxScroll).toDouble(),
+    );
+
+    await Future<void>.delayed(Duration.zero);
+
+    if (!mounted || !_scrollController.hasClients) return;
+
+    final key = _keyForMessage(_messages[index]);
+    final targetContext = key.currentContext;
+
+    if (targetContext == null || !targetContext.mounted) {
+      return;
+    }
+
+    final renderObject = targetContext.findRenderObject();
+
+    final scrollableContext = _scrollController.position.context.storageContext;
+
+    if (!scrollableContext.mounted) return;
+
+    final scrollableRenderObject = scrollableContext.findRenderObject();
+
+    if (renderObject is! RenderBox || scrollableRenderObject is! RenderBox) {
+      return;
+    }
+
+    final y =
+        renderObject
+            .localToGlobal(Offset.zero, ancestor: scrollableRenderObject)
+            .dy;
+
+    final target = (_scrollController.offset + y).clamp(
+      0.0,
+      _scrollController.position.maxScrollExtent,
+    );
+
+    await _scrollController.animateTo(
+      target.toDouble(),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _handleGlobalPointerSignal(PointerSignalEvent signal) {
+    if (signal is! PointerScrollEvent || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final target = (_scrollController.offset + signal.scrollDelta.dy).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    _scrollController.jumpTo(target.toDouble());
   }
 
   @override
@@ -565,6 +661,7 @@ class _AIScreenState extends State<AIScreen>
             _messages.addAll(
               messages.map(
                 (msg) => ChatMessage(
+                  id: _stableHiveMessageId(msg.conversationId, msg),
                   text: msg.text,
                   isUser: msg.isUser,
                   timestamp: msg.timestamp,
@@ -577,8 +674,6 @@ class _AIScreenState extends State<AIScreen>
                           : null,
                   images: msg.imageBytes,
                   isIncomplete: msg.isIncomplete ?? false,
-                  // Store stable identifier for search
-                  stableId: '${msg.conversationId}_${msg.timestamp.millisecondsSinceEpoch}',
                 ),
               ),
             );
@@ -865,9 +960,7 @@ Current Year: $currentYear''';
         },
       ],
       'tools': [
-        {
-          'google_search': {},
-        },
+        {'google_search': {}},
       ],
     };
 
@@ -1275,57 +1368,46 @@ Current Year: $currentYear''';
 
       if (!mounted) return;
 
-      // Find the target message index using stableId or fallback to first user message
       int targetIndex = 0;
-      
+
       setState(() {
         _messages.clear();
         _messageKeys.clear();
-        
-        final loadedMessages = messages.asMap().entries.map((entry) {
-          final idx = entry.key;
-          final msg = entry.value;
-          
-          final stableId = '${msg.conversationId}_${msg.timestamp.millisecondsSinceEpoch}';
-          
-          // If we have a messageId, find the matching message
-          if (messageId != null && stableId == messageId) {
-            targetIndex = idx;
-          }
-          
-          return ChatMessage(
-            text: msg.text,
-            isUser: msg.isUser,
-            timestamp: msg.timestamp,
-            isLoading: false,
-            isError: msg.isError,
-            thinkingProcess: msg.thinkingProcess,
-            thinkingTime:
-                msg.thinkingTimeMs != null
-                    ? Duration(milliseconds: msg.thinkingTimeMs!)
-                    : null,
-            images: msg.imageBytes,
-            isIncomplete: msg.isIncomplete ?? false,
-            stableId: stableId,
-          );
-        }).toList();
-        
-        _messages.addAll(loadedMessages);
+        _messages.addAll(
+          messages.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final msg = entry.value;
+
+            if (messageId != null &&
+                _stableHiveMessageId(msg.conversationId, msg) == messageId) {
+              targetIndex = idx;
+            }
+
+            return ChatMessage(
+              id: _stableHiveMessageId(msg.conversationId, msg),
+              text: msg.text,
+              isUser: msg.isUser,
+              timestamp: msg.timestamp,
+              isLoading: false,
+              isError: msg.isError,
+              thinkingProcess: msg.thinkingProcess,
+              thinkingTime:
+                  msg.thinkingTimeMs != null
+                      ? Duration(milliseconds: msg.thinkingTimeMs!)
+                      : null,
+              images: msg.imageBytes,
+              isIncomplete: msg.isIncomplete ?? false,
+            );
+          }).toList(),
+        );
         _forceNewConversation = false;
       });
 
-      // If we have a target user message, scroll to it with it at the top
-      if (targetIndex > 0 && _messages[targetIndex].isUser) {
-        // First jump roughly to the area
-        final roughTarget = (targetIndex / _messages.length) * 
-            _scrollController.position.maxScrollExtent;
-        _scrollController.jumpTo(roughTarget.clamp(0.0, _scrollController.position.maxScrollExtent));
-        
-        // Then after a frame, use the RenderBox for exact positioning
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _jumpToMessageWithTopAlignment(targetIndex);
-        });
-      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _jumpToMessageIndexExact(targetIndex);
+        }
+      });
 
       _scheduleAutoScroll();
     } catch (e) {
@@ -1333,62 +1415,6 @@ Current Year: $currentYear''';
         print('❌ Error loading specific conversation: $e');
       }
     }
-  }
-
-  void _jumpToMessageWithTopAlignment(int index) {
-    if (!_scrollController.hasClients) return;
-    
-    final key = _keyForMessage(index);
-    final context = key.currentContext;
-    
-    if (context == null) {
-      // Fallback to proportional
-      _jumpToProportional(index);
-      return;
-    }
-    
-    final renderBox = context.findRenderObject();
-    if (renderBox is! RenderBox) {
-      _jumpToProportional(index);
-      return;
-    }
-    
-    final scrollableContext = _scrollController.position.context.storageContext;
-    final scrollableRenderBox = scrollableContext.findRenderObject();
-    if (scrollableRenderBox is! RenderBox) {
-      _jumpToProportional(index);
-      return;
-    }
-    
-    final targetOffset = renderBox.localToGlobal(
-      Offset.zero,
-      ancestor: scrollableRenderBox,
-    );
-    
-    final targetScroll = _scrollController.offset + targetOffset.dy;
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    
-    _scrollController.animateTo(
-      targetScroll.clamp(0.0, maxScroll),
-      duration: const Duration(milliseconds: 400),
-      curve: Curves.easeOut,
-    );
-  }
-
-  void _jumpToProportional(int index) {
-    if (!_scrollController.hasClients) return;
-    final total = _messages.length;
-    if (total <= 1) {
-      _scrollController.jumpTo(0);
-      return;
-    }
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final target = (index / (total - 1)) * maxScroll;
-    _scrollController.animateTo(
-      target.clamp(0.0, maxScroll),
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOut,
-    );
   }
 
   Future<void> _sendGeminiMessage() async {
@@ -1894,33 +1920,21 @@ Current Year: $currentYear''';
                                     });
                                     WidgetsBinding.instance
                                         .addPostFrameCallback((_) {
-                                      if (mounted) {
-                                        this.setState(() {
-                                          _temperature = value;
+                                          if (mounted) {
+                                            this.setState(() {
+                                              _temperature = value;
+                                            });
+                                          }
                                         });
-                                      }
-                                    });
                                   },
                                 ),
                                 Row(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceEvenly,
                                   children: [
-                                    _buildPresetChip(
-                                      'Precise',
-                                      0.1,
-                                      setState,
-                                    ),
-                                    _buildPresetChip(
-                                      'Balanced',
-                                      0.5,
-                                      setState,
-                                    ),
-                                    _buildPresetChip(
-                                      'Creative',
-                                      0.8,
-                                      setState,
-                                    ),
+                                    _buildPresetChip('Precise', 0.1, setState),
+                                    _buildPresetChip('Balanced', 0.5, setState),
+                                    _buildPresetChip('Creative', 0.8, setState),
                                     _buildPresetChip('Wild', 1.0, setState),
                                   ],
                                 ),
@@ -2371,7 +2385,7 @@ Current Year: $currentYear''';
       scrollController: _scrollController,
       topOffset: 80,
       bottomOffset: 120,
-      keyForMessage: _keyForMessage,
+      keyForMessage: _keyForMessageIndex,
     );
   }
 
@@ -2602,31 +2616,27 @@ Current Year: $currentYear''';
               _chatBox.values.where((m) => m.conversationId == conv.id).toList()
                 ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-          for (final msg in msgs) {
-            // Skip AI responses - only show user messages in search
-            if (!msg.isUser) continue;
-            
-            if (msg.text.trim().length < 3) continue;
+          final userMessages = msgs.where((m) => m.isUser).toList();
+          if (userMessages.isEmpty) continue;
 
-            String conversationTitle = 'Chat';
-            final firstUserMsg = msgs.firstWhere(
-              (m) => m.isUser,
-              orElse: () => msg,
-            );
-            conversationTitle =
-                firstUserMsg.text.length > 30
-                    ? '${firstUserMsg.text.substring(0, 30)}...'
-                    : firstUserMsg.text;
+          final firstUserMsg = userMessages.first;
+          final conversationTitle =
+              firstUserMsg.text.length > 30
+                  ? '${firstUserMsg.text.substring(0, 30)}...'
+                  : firstUserMsg.text;
+
+          for (final msg in userMessages) {
+            if (msg.text.trim().length < 3) continue;
 
             allResults.add(
               _SearchResultItem(
                 conversationId: conv.id,
-                messageId: '${conv.id}_${msg.timestamp.millisecondsSinceEpoch}',
+                messageId: _stableHiveMessageId(conv.id, msg),
                 messageText: msg.text,
-                isUser: msg.isUser,
+                isUser: true,
                 timestamp: msg.timestamp,
                 conversationTitle: conversationTitle,
-                messageCount: msgs.length,
+                messageCount: userMessages.length,
               ),
             );
           }
@@ -2703,7 +2713,7 @@ Current Year: $currentYear''';
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      '${filteredResults.length} message${filteredResults.length > 1 ? 's' : ''} found',
+                      '${filteredResults.length} user message${filteredResults.length > 1 ? 's' : ''} found',
                       style: const TextStyle(
                         color: Colors.white54,
                         fontSize: 12,
@@ -2742,6 +2752,7 @@ Current Year: $currentYear''';
                           itemCount: filteredResults.length,
                           itemBuilder: (context, index) {
                             final item = filteredResults[index];
+                            const _ = true;
 
                             return Card(
                               color: Colors.grey.shade900,
@@ -2754,11 +2765,14 @@ Current Year: $currentYear''';
                                   horizontal: 14,
                                   vertical: 6,
                                 ),
-                                leading: const CircleAvatar(
-                                  backgroundColor: Colors.blue,
+                                leading: CircleAvatar(
+                                  backgroundColor:
+                                      Colors
+                                          .blue, // Always blue since all are user messages
                                   radius: 16,
-                                  child: Icon(
-                                    Icons.person,
+                                  child: const Icon(
+                                    Icons
+                                        .person, // Always person since all are user messages
                                     color: Colors.white,
                                     size: 14,
                                   ),
@@ -2769,10 +2783,12 @@ Current Year: $currentYear''';
                                 ),
                                 subtitle: Row(
                                   children: [
-                                    const Text(
+                                    Text(
                                       'You • ',
-                                      style: TextStyle(
-                                        color: Colors.blueAccent,
+                                      style: const TextStyle(
+                                        color:
+                                            Colors
+                                                .blueAccent, // Always blue since all are user messages
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -2797,7 +2813,7 @@ Current Year: $currentYear''';
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: Text(
-                                        '${item.messageCount} msgs',
+                                        '${item.messageCount} prompts',
                                         style: const TextStyle(
                                           color: Colors.grey,
                                           fontSize: 9,
@@ -3512,26 +3528,13 @@ Current Year: $currentYear''';
           ),
         ],
       ),
-      body: Listener(
-        onPointerSignal: (event) {
-          if (event is PointerScrollEvent) {
-            // Forward scroll events to the chat scroll controller
-            // regardless of cursor position
-            if (_scrollController.hasClients) {
-              final delta = event.scrollDelta.dy;
-              final newOffset = _scrollController.offset + delta;
-              final maxScroll = _scrollController.position.maxScrollExtent;
-              
-              _scrollController.jumpTo(
-                newOffset.clamp(0.0, maxScroll)
-              );
-            }
-          }
+      body: GestureDetector(
+        onTap: () {
+          FocusScope.of(context).unfocus();
         },
-        child: GestureDetector(
-          onTap: () {
-            FocusScope.of(context).unfocus();
-          },
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerSignal: _handleGlobalPointerSignal,
           child: Stack(
             children: [
               _webCentered(
@@ -3554,7 +3557,10 @@ Current Year: $currentYear''';
                             decoration: BoxDecoration(
                               color: Colors.blue.withAlpha(20),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.orange, width: 1),
+                              border: Border.all(
+                                color: Colors.orange,
+                                width: 1,
+                              ),
                             ),
                             child: Row(
                               children: [
@@ -3773,7 +3779,9 @@ Current Year: $currentYear''';
                                         : Icons.check_circle,
                                     size: 10,
                                     color:
-                                        _isStreaming ? Colors.green : Colors.grey,
+                                        _isStreaming
+                                            ? Colors.green
+                                            : Colors.grey,
                                   ),
                                   const SizedBox(width: 3),
                                   Text(
@@ -3895,7 +3903,7 @@ Current Year: $currentYear''';
                                 itemBuilder: (context, index) {
                                   if (index < _messages.length) {
                                     return KeyedSubtree(
-                                      key: _keyForMessage(index),
+                                      key: _keyForMessage(_messages[index]),
                                       child: ChatBubbleWithThinking(
                                         message: _messages[index],
                                         enableAutoScroll: _enableAutoScroll,
@@ -3922,11 +3930,12 @@ Current Year: $currentYear''';
                                         padding: const EdgeInsets.all(14),
                                         decoration: BoxDecoration(
                                           color: Colors.grey.shade900,
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
                                           border: Border.all(
-                                            color: Colors.purpleAccent.withAlpha(
-                                              60,
-                                            ),
+                                            color: Colors.purpleAccent
+                                                .withAlpha(60),
                                             width: 1,
                                           ),
                                         ),
@@ -3954,14 +3963,12 @@ Current Year: $currentYear''';
                                                 const SizedBox(
                                                   width: 14,
                                                   height: 14,
-                                                  child:
-                                                      CircularProgressIndicator(
+                                                  child: CircularProgressIndicator(
                                                     strokeWidth: 2,
                                                     valueColor:
                                                         AlwaysStoppedAnimation<
-                                                            Color>(
-                                                      Colors.purpleAccent,
-                                                    ),
+                                                          Color
+                                                        >(Colors.purpleAccent),
                                                   ),
                                                 ),
                                                 const Spacer(),
@@ -3988,13 +3995,16 @@ Current Year: $currentYear''';
                                                   decoration: BoxDecoration(
                                                     color: Colors.black,
                                                     borderRadius:
-                                                        BorderRadius.circular(8),
+                                                        BorderRadius.circular(
+                                                          8,
+                                                        ),
                                                   ),
                                                   child: Text(
                                                     _currentThinkingProcess,
                                                     style: const TextStyle(
                                                       color:
-                                                          Colors.lightGreenAccent,
+                                                          Colors
+                                                              .lightGreenAccent,
                                                       fontSize: 13,
                                                       height: 1.4,
                                                     ),
@@ -4043,7 +4053,9 @@ Current Year: $currentYear''';
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(6),
                                     image: DecorationImage(
-                                      image: MemoryImage(_selectedImages[index]),
+                                      image: MemoryImage(
+                                        _selectedImages[index],
+                                      ),
                                       fit: BoxFit.cover,
                                     ),
                                   ),
@@ -4128,10 +4140,11 @@ Current Year: $currentYear''';
                                         fontSize: 14,
                                       ),
                                       border: InputBorder.none,
-                                      contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 10,
-                                      ),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 10,
+                                          ),
                                       suffixIcon:
                                           _isStreaming
                                               ? IconButton(
@@ -4149,11 +4162,13 @@ Current Year: $currentYear''';
                                                       _currentStreamText = '';
                                                       _currentThinkingProcess =
                                                           '';
-                                                      _isThinkingComplete = false;
+                                                      _isThinkingComplete =
+                                                          false;
                                                       _isThinkingPhase = false;
                                                     });
                                                   }
-                                                  if (_inputFocusNode?.hasFocus ==
+                                                  if (_inputFocusNode
+                                                          ?.hasFocus ==
                                                       false) {
                                                     _inputFocusNode
                                                         ?.requestFocus();
@@ -4303,6 +4318,7 @@ class GeminiModel {
 }
 
 class ChatMessage {
+  final String id;
   final String text;
   final bool isUser;
   final DateTime timestamp;
@@ -4313,9 +4329,9 @@ class ChatMessage {
   final Duration? thinkingTime;
   final bool isIncomplete;
   final bool canRetry;
-  final String? stableId; // For search navigation
 
   ChatMessage({
+    String? id,
     required this.text,
     required this.isUser,
     required this.timestamp,
@@ -4326,8 +4342,9 @@ class ChatMessage {
     this.thinkingTime,
     this.isIncomplete = false,
     this.canRetry = false,
-    this.stableId,
-  });
+  }) : id =
+           id ??
+           '${timestamp.microsecondsSinceEpoch}-${isUser ? "u" : "a"}-${text.hashCode}';
 }
 
 class _CodeBlock {
@@ -5022,17 +5039,14 @@ class _SearchResultItem {
 }
 
 // ============================================================
-// DeepSeek-style scroll scrubber - COMPLETELY FIXED
+// Compact prompt scrubber.
 //
-// Features:
-// 1. Only 8 dashes visible at a time (sliding window)
-// 2. Tight spacing (6px between dashes)
-// 3. Compact block (~150px max height), vertically centered
-// 4. Scroll works anywhere via top-level Listener
-// 5. Hover card and dashes in one MouseRegion
-// 6. Two-phase jump: rough then exact using RenderBox
-// 7. Active dash updates on click
-// 8. User message lands at TOP of screen
+// Navigation points are user messages only. The strip shows a compact,
+// vertically centered window of at most 8 dashes with 5px gaps. Clicking a
+// dash updates the active dash immediately, jumps near the target so the
+// builder creates it, then aligns the real RenderBox to the top of the chat.
+// The dash strip and popup are one hover region, so the popup stays open while
+// moving from the dashes into the card.
 // ============================================================
 class _MessageScrubber extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -5054,291 +5068,253 @@ class _MessageScrubber extends StatefulWidget {
 }
 
 class _MessageScrubberState extends State<_MessageScrubber> {
-  bool _showCard = false;
-  int? _activeIndex;
-  Timer? _hideTimer;
-
-  // Track which dash window we're showing (0 = first 8, 1 = next 8, etc.)
-  int _dashWindowStart = 0;
   static const int _maxVisibleDashes = 8;
+  static const double _dashHeight = 14;
+  static const double _dashGap = 5;
 
-  void _openCard() {
-    _hideTimer?.cancel();
-    if (!_showCard) {
-      setState(() => _showCard = true);
-    }
+  bool _showCard = false;
+  int? _activeGlobalIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_updateActiveFromScroll);
   }
 
-  void _scheduleClose() {
-    _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(milliseconds: 220), () {
-      if (mounted) {
-        setState(() => _showCard = false);
-      }
-    });
+  @override
+  void didUpdateWidget(covariant _MessageScrubber oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollController != widget.scrollController) {
+      oldWidget.scrollController.removeListener(_updateActiveFromScroll);
+      widget.scrollController.addListener(_updateActiveFromScroll);
+    }
   }
 
   @override
   void dispose() {
-    _hideTimer?.cancel();
+    widget.scrollController.removeListener(_updateActiveFromScroll);
     super.dispose();
+  }
+
+  List<int> _userMessageIndices() {
+    final indices = <int>[];
+    for (int i = 0; i < widget.messages.length; i++) {
+      if (widget.messages[i].isUser) indices.add(i);
+    }
+    return indices;
   }
 
   String _shortPreview(String text) {
     final cleaned = text.replaceAll('\n', ' ').trim();
     if (cleaned.isEmpty) return '(empty message)';
-    final words = cleaned.split(RegExp(r'\s+'));
-    if (words.length <= 5) return cleaned;
-    return '${words.take(5).join(' ')}...';
+    final sentenceEnd = cleaned.indexOf(RegExp(r'[.!?]'));
+    final firstSentence =
+        sentenceEnd > 0 ? cleaned.substring(0, sentenceEnd + 1) : cleaned;
+    final words = firstSentence.split(RegExp(r'\s+'));
+    if (words.length <= 12) return firstSentence;
+    return '${words.take(12).join(' ')}...';
   }
 
-  void _jumpTo(int globalIndex) {
-    setState(() {
-      _activeIndex = globalIndex;
-      _showCard = false;
-      // Update the dash window to center around the active dash
-      final totalTurns = _getTurnIndices().length;
-      if (totalTurns > _maxVisibleDashes) {
-        _dashWindowStart = (globalIndex - 3).clamp(
-          0,
-          totalTurns - _maxVisibleDashes,
-        );
-      }
-    });
-
-    // Two-phase jump: first rough, then precise after frame
-    _jumpToRoughPosition(globalIndex);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _jumpToExactPosition(globalIndex);
-    });
-  }
-
-  void _jumpToRoughPosition(int globalIndex) {
-    if (!widget.scrollController.hasClients) return;
-
-    final maxScroll = widget.scrollController.position.maxScrollExtent;
-    final total = widget.messages.length;
-
-    if (total <= 1 || maxScroll <= 0) {
-      widget.scrollController.jumpTo(0);
-      return;
+  int _activeIndexInTurns(List<int> turnIndices) {
+    if (turnIndices.isEmpty) return 0;
+    final active = _activeGlobalIndex;
+    if (active != null) {
+      final activeTurn = turnIndices.indexOf(active);
+      if (activeTurn >= 0) return activeTurn;
     }
-
-    final target = (globalIndex / (total - 1)) * maxScroll;
-    widget.scrollController.jumpTo(target.clamp(0.0, maxScroll));
+    return 0;
   }
 
-  void _jumpToExactPosition(int globalIndex) {
-    if (!widget.scrollController.hasClients) return;
+  List<int> _visibleWindow(List<int> turnIndices) {
+    if (turnIndices.length <= _maxVisibleDashes) return turnIndices;
+
+    final activeTurn = _activeIndexInTurns(turnIndices);
+    final maxStart = turnIndices.length - _maxVisibleDashes;
+    final start = (activeTurn - 4).clamp(0, maxStart).toInt();
+    final end =
+        (start + _maxVisibleDashes).clamp(0, turnIndices.length).toInt();
+    return turnIndices.sublist(start, end);
+  }
+
+  double _estimateOffset(int globalIndex) {
+    if (!widget.scrollController.hasClients || widget.messages.length <= 1) {
+      return 0.0;
+    }
+    final maxScroll = widget.scrollController.position.maxScrollExtent;
+    return ((globalIndex / (widget.messages.length - 1)) * maxScroll)
+        .clamp(0.0, maxScroll)
+        .toDouble();
+  }
+
+  Future<bool> _alignBuiltMessageToTop(
+    int globalIndex, {
+    bool animate = true,
+  }) async {
+    if (!mounted || !widget.scrollController.hasClients) return false;
 
     final key = widget.keyForMessage(globalIndex);
-    final context = key.currentContext;
+    final targetContext = key.currentContext;
+    if (targetContext == null) return false;
 
-    if (context == null) return;
+    // Capture render objects BEFORE any async gap
+    final renderObject = targetContext.findRenderObject();
+    final scrollableContext =
+        widget.scrollController.position.context.storageContext;
+    final scrollableRenderObject = scrollableContext.findRenderObject();
 
-    final renderBox = context.findRenderObject();
-    if (renderBox is! RenderBox) return;
+    if (renderObject is! RenderBox || scrollableRenderObject is! RenderBox) {
+      return false;
+    }
+
+    final y =
+        renderObject
+            .localToGlobal(Offset.zero, ancestor: scrollableRenderObject)
+            .dy;
+    final target = (widget.scrollController.offset + y).clamp(
+      0.0,
+      widget.scrollController.position.maxScrollExtent,
+    );
+
+    // Now the async operation
+    if (animate) {
+      await widget.scrollController.animateTo(
+        target.toDouble(),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+      // Check mounted after the await
+      if (!mounted) return false;
+    } else {
+      widget.scrollController.jumpTo(target.toDouble());
+    }
+    return true;
+  }
+
+  Future<void> _jumpTo(int globalIndex) async {
+    setState(() {
+      _activeGlobalIndex = globalIndex;
+      _showCard = false;
+    });
+
+    if (!widget.scrollController.hasClients) return;
+
+    final alreadyBuilt = await _alignBuiltMessageToTop(globalIndex);
+    if (alreadyBuilt) return;
+
+    widget.scrollController.jumpTo(_estimateOffset(globalIndex));
+    await Future<void>.delayed(Duration.zero);
+    await _alignBuiltMessageToTop(globalIndex);
+  }
+
+  void _updateActiveFromScroll() {
+    if (!mounted || !widget.scrollController.hasClients) return;
+    final turnIndices = _userMessageIndices();
+    if (turnIndices.isEmpty) return;
 
     final scrollableContext =
         widget.scrollController.position.context.storageContext;
-    final scrollableRenderBox = scrollableContext.findRenderObject();
-    if (scrollableRenderBox is! RenderBox) return;
+    final scrollableRenderObject = scrollableContext.findRenderObject();
+    if (scrollableRenderObject is! RenderBox) return;
 
-    final targetOffset = renderBox.localToGlobal(
-      Offset.zero,
-      ancestor: scrollableRenderBox,
-    );
+    int? bestIndex;
+    double bestY = double.negativeInfinity;
 
-    // Position the user message at the TOP of the viewport
-    final targetScroll = widget.scrollController.offset + targetOffset.dy - 20;
-    final maxScroll = widget.scrollController.position.maxScrollExtent;
+    for (final globalIndex in turnIndices) {
+      final key = widget.keyForMessage(globalIndex);
+      final context = key.currentContext;
+      if (context == null) continue;
+      final renderObject = context.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) continue;
 
-    widget.scrollController.animateTo(
-      targetScroll.clamp(0.0, maxScroll),
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOut,
-    );
-  }
+      // Use the stored renderObject directly
+      final y =
+          renderObject
+              .localToGlobal(Offset.zero, ancestor: scrollableRenderObject)
+              .dy;
 
-  List<int> _getTurnIndices() {
-    final List<int> turnIndices = [];
-    for (int i = 0; i < widget.messages.length; i++) {
-      if (widget.messages[i].isUser) {
-        turnIndices.add(i);
+      if (y <= 24 && y > bestY) {
+        bestY = y;
+        bestIndex = globalIndex;
       }
     }
-    return turnIndices;
+
+    bestIndex ??= turnIndices.first;
+    if (bestIndex != _activeGlobalIndex) {
+      setState(() => _activeGlobalIndex = bestIndex);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final turnIndices = _getTurnIndices();
-
-    if (turnIndices.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    final turnIndices = _userMessageIndices();
+    if (turnIndices.isEmpty) return const SizedBox.shrink();
 
     final screenHeight = MediaQuery.of(context).size.height;
     final availableHeight =
         screenHeight - widget.topOffset - widget.bottomOffset;
+    if (availableHeight <= 40) return const SizedBox.shrink();
 
-    if (availableHeight <= 40) {
-      return const SizedBox.shrink();
-    }
-
-    final int lastTurnGlobalIndex = turnIndices.last;
-    final int activeIndex = _activeIndex ?? lastTurnGlobalIndex;
-
-    // --- COMPACT DASH LAYOUT ---
-    // Constants: tight spacing, compact block
-    const double dashHeight = 4.0;
-    const double dashSpacing = 6.0; // TIGHT: 6px between dashes
-    const double dashWidth = 20.0;
-    const double activeDashWidth = 26.0;
-
-    // Calculate total block height - only for visible dashes
-    final int totalTurns = turnIndices.length;
-    final int visibleCount =
-        totalTurns > _maxVisibleDashes ? _maxVisibleDashes : totalTurns;
-
-    // Block height: dashes + gaps between them
-    final double totalBlockHeight =
-        (visibleCount * dashHeight) + ((visibleCount - 1) * dashSpacing);
-
-    // Max block height ~150px (with some padding for active dash)
-    final double maxBlockHeight = 150.0;
-    final double finalBlockHeight =
-        totalBlockHeight > maxBlockHeight ? maxBlockHeight : totalBlockHeight;
-
-    // Vertically center the compact block
-    final double topMargin = (availableHeight - finalBlockHeight) / 2;
-
-    // Calculate visible window of dashes
-    // Ensure window shows active dash if possible
-    if (totalTurns > _maxVisibleDashes) {
-      // If active index is outside current window, adjust
-      if (activeIndex < turnIndices[_dashWindowStart]) {
-        _dashWindowStart = (activeIndex - 3).clamp(
-          0,
-          totalTurns - _maxVisibleDashes,
-        );
-      } else if (activeIndex >
-          turnIndices[(_dashWindowStart + _maxVisibleDashes - 1).clamp(
-            0,
-            totalTurns - 1,
-          )]) {
-        _dashWindowStart = (activeIndex - 3).clamp(
-          0,
-          totalTurns - _maxVisibleDashes,
-        );
-      }
-    }
-
-    final int endWindow =
-        (totalTurns < _maxVisibleDashes)
-            ? totalTurns
-            : (_dashWindowStart + _maxVisibleDashes).clamp(0, totalTurns);
-
-    final List<int> visibleTurnIndices = turnIndices.sublist(
-      _dashWindowStart.clamp(0, totalTurns - 1),
-      endWindow,
-    );
+    _activeGlobalIndex ??= turnIndices.first;
+    final visibleTurns = _visibleWindow(turnIndices);
+    final dashCount = visibleTurns.length;
+    final blockHeight = dashCount * _dashHeight + (dashCount - 1) * _dashGap;
+    final top =
+        widget.topOffset +
+        ((availableHeight - blockHeight) / 2)
+            .clamp(0.0, availableHeight)
+            .toDouble();
 
     return Positioned(
-      right: 6,
-      top: widget.topOffset,
-      bottom: widget.bottomOffset,
+      right: 12,
+      top: top,
       child: MouseRegion(
-        onEnter: (_) => _openCard(),
-        onExit: (_) => _scheduleClose(),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // ---- COMPACT DASH COLUMN - VERTICALLY CENTERED ----
-            Positioned(
-              top: topMargin,
-              left: 0,
-              right: 0,
-              child: SizedBox(
-                height: finalBlockHeight,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    for (int i = 0; i < visibleTurnIndices.length; i++)
-                      GestureDetector(
-                        onTap: () => _jumpTo(visibleTurnIndices[i]),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: SizedBox(
-                            height: dashHeight + dashSpacing,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 1,
-                                horizontal: 6,
-                              ),
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: Container(
-                                  width:
-                                      visibleTurnIndices[i] == activeIndex
-                                          ? activeDashWidth
-                                          : dashWidth,
-                                  height:
-                                      visibleTurnIndices[i] == activeIndex
-                                          ? dashHeight + 2
-                                          : dashHeight,
-                                  decoration: BoxDecoration(
-                                    color:
-                                        visibleTurnIndices[i] == activeIndex
-                                            ? Colors.orange
-                                            : Colors.blue.withAlpha(170),
-                                    borderRadius: BorderRadius.circular(3),
-                                    boxShadow:
-                                        visibleTurnIndices[i] == activeIndex
-                                            ? [
-                                              BoxShadow(
-                                                color: Colors.orange.withAlpha(
-                                                  140,
-                                                ),
-                                                blurRadius: 5,
-                                              ),
-                                            ]
-                                            : null,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
+        onEnter: (_) => setState(() => _showCard = true),
+        onExit: (_) => setState(() => _showCard = false),
+        child: SizedBox(
+          width: _showCard ? 294 : 44,
+          height: blockHeight.clamp(40.0, availableHeight).toDouble(),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                right: 0,
+                top: 0,
+                child: SizedBox(
+                  width: 44,
+                  height: blockHeight,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (int i = 0; i < visibleTurns.length; i++) ...[
+                        _DashButton(
+                          isActive: visibleTurns[i] == _activeGlobalIndex,
+                          onTap: () => _jumpTo(visibleTurns[i]),
                         ),
-                      ),
-                  ],
+                        if (i != visibleTurns.length - 1)
+                          const SizedBox(height: _dashGap),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-
-            // ---- HOVER CARD ----
-            Positioned(
-              right: 50,
-              top: topMargin,
-              child: IgnorePointer(
-                ignoring: !_showCard,
-                child: AnimatedOpacity(
-                  opacity: _showCard ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 150),
-                  curve: Curves.easeOut,
-                  child: MouseRegion(
-                    onEnter: (_) => _openCard(),
-                    onExit: (_) => _scheduleClose(),
+              Positioned(
+                right: 46,
+                top: 0,
+                child: IgnorePointer(
+                  ignoring: !_showCard,
+                  child: AnimatedOpacity(
+                    opacity: _showCard ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 120),
+                    curve: Curves.easeOut,
                     child: Container(
-                      width: 230,
+                      width: 240,
                       constraints: BoxConstraints(
-                        maxHeight: availableHeight.clamp(120.0, 420.0),
+                        maxHeight:
+                            availableHeight.clamp(120.0, 420.0).toDouble(),
                       ),
                       decoration: BoxDecoration(
                         color: const Color(0xFF1A1A1A),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: Colors.grey.shade700),
                         boxShadow: const [
                           BoxShadow(
@@ -5354,7 +5330,7 @@ class _MessageScrubberState extends State<_MessageScrubber> {
                         itemCount: turnIndices.length,
                         itemBuilder: (context, i) {
                           final globalIndex = turnIndices[i];
-                          final isActive = globalIndex == activeIndex;
+                          final isActive = globalIndex == _activeGlobalIndex;
                           final preview = _shortPreview(
                             widget.messages[globalIndex].text,
                           );
@@ -5393,8 +5369,48 @@ class _MessageScrubberState extends State<_MessageScrubber> {
                   ),
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashButton extends StatelessWidget {
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _DashButton({required this.isActive, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: SizedBox(
+          width: 44,
+          height: _MessageScrubberState._dashHeight,
+          child: Center(
+            child: Container(
+              width: isActive ? 26 : 20,
+              height: isActive ? 5 : 3,
+              decoration: BoxDecoration(
+                color: isActive ? Colors.orange : Colors.blue.withAlpha(170),
+                borderRadius: BorderRadius.circular(3),
+                boxShadow:
+                    isActive
+                        ? [
+                          BoxShadow(
+                            color: Colors.orange.withAlpha(140),
+                            blurRadius: 5,
+                          ),
+                        ]
+                        : null,
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
