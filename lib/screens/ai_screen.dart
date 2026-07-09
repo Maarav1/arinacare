@@ -135,15 +135,15 @@ class _AIScreenState extends State<AIScreen>
     AIPlatform(
       name: 'Gemini API',
       url: 'gemini://api',
-      icon: Icons.auto_awesome, // Keep this
-      color: Colors.orange, // Keep this
+      icon: Icons.auto_awesome,
+      color: Colors.orange,
       description: 'Google\'s AI (Direct API)',
     ),
     AIPlatform(
       name: 'Gemini Web',
       url: 'https://gemini.google.com/',
       icon: Icons.language,
-      color: Colors.blue, // Changed from Colors.orange to avoid duplicate
+      color: Colors.blue,
       description: 'Google Gemini Web Version',
     ),
     AIPlatform(
@@ -196,94 +196,14 @@ class _AIScreenState extends State<AIScreen>
 
   Timer? _searchDebounce;
 
-  // NEW: Maps each message's index to a GlobalKey so the scrubber can
-  // read that message's real on-screen position after layout instead of
-  // guessing based on a proportional average, which is what makes the
-  // pixel-accurate jump described below possible.
-  final Map<String, GlobalKey> _messageKeys = {};
+  // Maps each message's index to a GlobalKey so the scrubber (and the
+  // precise search-result jump below) can read that message's real
+  // on-screen position after layout instead of guessing based on a
+  // proportional average.
+  final Map<int, GlobalKey> _messageKeys = {};
 
-  String _stableHiveMessageId(String conversationId, ChatMessageHive msg) {
-    final role = msg.isUser ? 'u' : 'a';
-    return '$conversationId-${msg.timestamp.microsecondsSinceEpoch}-$role';
-  }
-
-  GlobalKey _keyForMessage(ChatMessage message) {
-    return _messageKeys.putIfAbsent(message.id, () => GlobalKey());
-  }
-
-  GlobalKey _keyForMessageIndex(int index) {
-    return _keyForMessage(_messages[index]);
-  }
-
-  double _estimatedOffsetForIndex(int index) {
-    if (!_scrollController.hasClients || _messages.length <= 1) return 0.0;
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    return ((index / (_messages.length - 1)) * maxScroll)
-        .clamp(0.0, maxScroll)
-        .toDouble();
-  }
-
-  Future<void> _jumpToMessageIndexExact(int index) async {
-    if (!_scrollController.hasClients ||
-        index < 0 ||
-        index >= _messages.length) {
-      return;
-    }
-
-    final maxScroll = _scrollController.position.maxScrollExtent;
-
-    _scrollController.jumpTo(
-      _estimatedOffsetForIndex(index).clamp(0.0, maxScroll).toDouble(),
-    );
-
-    await Future<void>.delayed(Duration.zero);
-
-    if (!mounted || !_scrollController.hasClients) return;
-
-    final key = _keyForMessage(_messages[index]);
-    final targetContext = key.currentContext;
-
-    if (targetContext == null || !targetContext.mounted) {
-      return;
-    }
-
-    final renderObject = targetContext.findRenderObject();
-
-    final scrollableContext = _scrollController.position.context.storageContext;
-
-    if (!scrollableContext.mounted) return;
-
-    final scrollableRenderObject = scrollableContext.findRenderObject();
-
-    if (renderObject is! RenderBox || scrollableRenderObject is! RenderBox) {
-      return;
-    }
-
-    final y =
-        renderObject
-            .localToGlobal(Offset.zero, ancestor: scrollableRenderObject)
-            .dy;
-
-    final target = (_scrollController.offset + y).clamp(
-      0.0,
-      _scrollController.position.maxScrollExtent,
-    );
-
-    await _scrollController.animateTo(
-      target.toDouble(),
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
-  void _handleGlobalPointerSignal(PointerSignalEvent signal) {
-    if (signal is! PointerScrollEvent || !_scrollController.hasClients) return;
-    final position = _scrollController.position;
-    final target = (_scrollController.offset + signal.scrollDelta.dy).clamp(
-      position.minScrollExtent,
-      position.maxScrollExtent,
-    );
-    _scrollController.jumpTo(target.toDouble());
+  GlobalKey _keyForMessage(int index) {
+    return _messageKeys.putIfAbsent(index, () => GlobalKey());
   }
 
   @override
@@ -661,7 +581,6 @@ class _AIScreenState extends State<AIScreen>
             _messages.addAll(
               messages.map(
                 (msg) => ChatMessage(
-                  id: _stableHiveMessageId(msg.conversationId, msg),
                   text: msg.text,
                   isUser: msg.isUser,
                   timestamp: msg.timestamp,
@@ -1352,6 +1271,126 @@ Current Year: $currentYear''';
     );
   }
 
+  // ============================================================
+  // Two-phase precise jump used by search-result taps.
+  //
+  // Why this exists: the old implementation multiplied the target index
+  // by a flat 100px "itemHeight" guess. That is meaningless once messages
+  // have different heights (a one-line reply vs. a 1000-line code block),
+  // so it never actually lands on the right message. This version reads
+  // the target message's real on-screen RenderBox (via its GlobalKey)
+  // once the list has had a chance to build it, and scrolls so that
+  // message's top edge lands at the top of the viewport. If the target
+  // is far outside the currently built range and its RenderBox isn't
+  // available yet, it jumps close proportionally first, waits briefly for
+  // ListView.builder to lay out the now-nearby target, then refines to the
+  // exact pixel position.
+  // ============================================================
+  void _preciseJumpToIndex(int targetIndex) {
+    if (targetIndex <= 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrollController.hasClients) {
+          _scrollController.jumpTo(0);
+        }
+      });
+      return;
+    }
+
+    void proportionalFallback() {
+      if (!_scrollController.hasClients) return;
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      final total = _messages.length;
+      if (total <= 1 || maxScroll <= 0) {
+        _scrollController.jumpTo(0);
+        return;
+      }
+      final target = (targetIndex / (total - 1)) * maxScroll;
+      _scrollController.animateTo(
+        target.clamp(0.0, maxScroll),
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
+    }
+
+    void refineToExactPosition() {
+      if (!mounted || !_scrollController.hasClients) return;
+
+      final retryContext = _messageKeys[targetIndex]?.currentContext;
+      if (retryContext == null) return;
+
+      final renderObject = retryContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) return;
+
+      final scrollableContext =
+          _scrollController.position.context.storageContext;
+      final scrollableRenderObject = scrollableContext.findRenderObject();
+      if (scrollableRenderObject is! RenderBox) return;
+
+      final targetOffsetInScrollable = renderObject.localToGlobal(
+        Offset.zero,
+        ancestor: scrollableRenderObject,
+      );
+
+      final absoluteTarget =
+          _scrollController.offset + targetOffsetInScrollable.dy;
+      final maxScroll = _scrollController.position.maxScrollExtent;
+
+      _scrollController.animateTo(
+        absoluteTarget.clamp(0.0, maxScroll),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+
+      final targetContext = _messageKeys[targetIndex]?.currentContext;
+
+      if (targetContext == null) {
+        proportionalFallback();
+        Future.delayed(
+          const Duration(milliseconds: 380),
+          refineToExactPosition,
+        );
+        return;
+      }
+
+      final renderObject = targetContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) {
+        proportionalFallback();
+        Future.delayed(
+          const Duration(milliseconds: 380),
+          refineToExactPosition,
+        );
+        return;
+      }
+
+      final scrollableContext =
+          _scrollController.position.context.storageContext;
+      final scrollableRenderObject = scrollableContext.findRenderObject();
+      if (scrollableRenderObject is! RenderBox) {
+        proportionalFallback();
+        return;
+      }
+
+      final targetOffsetInScrollable = renderObject.localToGlobal(
+        Offset.zero,
+        ancestor: scrollableRenderObject,
+      );
+
+      final absoluteTarget =
+          _scrollController.offset + targetOffsetInScrollable.dy;
+      final maxScroll = _scrollController.position.maxScrollExtent;
+
+      _scrollController.animateTo(
+        absoluteTarget.clamp(0.0, maxScroll),
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   Future<void> _loadSpecificConversation(
     String conversationId, {
     String? messageId,
@@ -1369,6 +1408,7 @@ Current Year: $currentYear''';
       if (!mounted) return;
 
       int targetIndex = 0;
+      bool foundTarget = false;
 
       setState(() {
         _messages.clear();
@@ -1378,13 +1418,20 @@ Current Year: $currentYear''';
             final idx = entry.key;
             final msg = entry.value;
 
-            if (messageId != null &&
-                _stableHiveMessageId(msg.conversationId, msg) == messageId) {
+            // Stable ID built from data that survives _saveConversation()'s
+            // delete-and-re-add cycle. msg.key (the Hive box key) does NOT
+            // survive that cycle, which is why a search result's stored
+            // messageId used to point at nothing after the very next save,
+            // and clicking it silently did nothing.
+            final stableId =
+                '${conversationId}_${msg.timestamp.microsecondsSinceEpoch}_${msg.isUser ? "u" : "a"}';
+
+            if (messageId != null && stableId == messageId) {
               targetIndex = idx;
+              foundTarget = true;
             }
 
             return ChatMessage(
-              id: _stableHiveMessageId(msg.conversationId, msg),
               text: msg.text,
               isUser: msg.isUser,
               timestamp: msg.timestamp,
@@ -1403,13 +1450,22 @@ Current Year: $currentYear''';
         _forceNewConversation = false;
       });
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _jumpToMessageIndexExact(targetIndex);
-        }
-      });
-
-      _scheduleAutoScroll();
+      if (foundTarget) {
+        // Precise, GlobalKey-driven jump so the target user message lands
+        // at the top of the viewport. Deliberately NOT calling
+        // _scheduleAutoScroll() here: that method force-jumps to the very
+        // bottom of the list on the next frame whenever auto-scroll is on,
+        // which was overriding this animation and made it look like
+        // clicking a search result "did nothing" — you'd just end up back
+        // at the bottom of the conversation instead of at the tapped
+        // message.
+        _preciseJumpToIndex(targetIndex);
+      } else {
+        // No specific message requested (e.g. opening a chat without a
+        // search context) — keep the previous behavior of snapping to the
+        // latest content.
+        _scheduleAutoScroll();
+      }
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error loading specific conversation: $e');
@@ -2371,9 +2427,9 @@ Current Year: $currentYear''';
   }
 
   // ============================================================
-  // Scroll scrubber entry point: builds the long-dash track plus its
-  // hover card, now backed by GlobalKey-based precise jumping and a
-  // smooth fade transition on the card, as described above.
+  // Scroll scrubber entry point: builds the compact dash strip plus its
+  // hover card, backed by GlobalKey-based precise jumping, an 8-dash
+  // sliding window, and a single shared hit-test region for dash + card.
   // ============================================================
   Widget _buildScrollProgressIndicator() {
     if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
@@ -2385,7 +2441,7 @@ Current Year: $currentYear''';
       scrollController: _scrollController,
       topOffset: 80,
       bottomOffset: 120,
-      keyForMessage: _keyForMessageIndex,
+      keyForMessage: _keyForMessage,
     );
   }
 
@@ -2616,27 +2672,41 @@ Current Year: $currentYear''';
               _chatBox.values.where((m) => m.conversationId == conv.id).toList()
                 ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-          final userMessages = msgs.where((m) => m.isUser).toList();
-          if (userMessages.isEmpty) continue;
+          // Search results should only ever be built from the USER'S
+          // messages, never the AI's replies — the preview shown, the
+          // matching, and the jump target are all the user's own words.
+          final userMsgs = msgs.where((m) => m.isUser).toList();
 
-          final firstUserMsg = userMessages.first;
-          final conversationTitle =
-              firstUserMsg.text.length > 30
-                  ? '${firstUserMsg.text.substring(0, 30)}...'
-                  : firstUserMsg.text;
-
-          for (final msg in userMessages) {
+          for (final msg in userMsgs) {
             if (msg.text.trim().length < 3) continue;
+
+            String conversationTitle = 'Chat';
+            final firstUserMsg = msgs.firstWhere(
+              (m) => m.isUser,
+              orElse: () => msg,
+            );
+            conversationTitle =
+                firstUserMsg.text.length > 30
+                    ? '${firstUserMsg.text.substring(0, 30)}...'
+                    : firstUserMsg.text;
+
+            // Stable ID: does NOT rely on msg.key (the Hive box key),
+            // because that key changes every time _saveConversation()
+            // deletes and re-adds all messages. timestamp + isUser +
+            // conversationId never changes across saves, so it keeps
+            // working as a jump target indefinitely.
+            final stableMessageId =
+                '${conv.id}_${msg.timestamp.microsecondsSinceEpoch}_${msg.isUser ? "u" : "a"}';
 
             allResults.add(
               _SearchResultItem(
                 conversationId: conv.id,
-                messageId: _stableHiveMessageId(conv.id, msg),
+                messageId: stableMessageId,
                 messageText: msg.text,
-                isUser: true,
+                isUser: msg.isUser,
                 timestamp: msg.timestamp,
                 conversationTitle: conversationTitle,
-                messageCount: userMessages.length,
+                messageCount: msgs.length,
               ),
             );
           }
@@ -2672,7 +2742,7 @@ Current Year: $currentYear''';
                   autofocus: true,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: 'Search your messages...',
+                    hintText: 'Search all messages...',
                     hintStyle: const TextStyle(color: Colors.grey),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon:
@@ -2713,7 +2783,7 @@ Current Year: $currentYear''';
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      '${filteredResults.length} user message${filteredResults.length > 1 ? 's' : ''} found',
+                      '${filteredResults.length} message${filteredResults.length > 1 ? 's' : ''} found',
                       style: const TextStyle(
                         color: Colors.white54,
                         fontSize: 12,
@@ -2752,7 +2822,7 @@ Current Year: $currentYear''';
                           itemCount: filteredResults.length,
                           itemBuilder: (context, index) {
                             final item = filteredResults[index];
-                            const _ = true;
+                            final isUser = item.isUser;
 
                             return Card(
                               color: Colors.grey.shade900,
@@ -2767,12 +2837,10 @@ Current Year: $currentYear''';
                                 ),
                                 leading: CircleAvatar(
                                   backgroundColor:
-                                      Colors
-                                          .blue, // Always blue since all are user messages
+                                      isUser ? Colors.blue : Colors.orange,
                                   radius: 16,
-                                  child: const Icon(
-                                    Icons
-                                        .person, // Always person since all are user messages
+                                  child: Icon(
+                                    isUser ? Icons.person : Icons.auto_awesome,
                                     color: Colors.white,
                                     size: 14,
                                   ),
@@ -2784,11 +2852,12 @@ Current Year: $currentYear''';
                                 subtitle: Row(
                                   children: [
                                     Text(
-                                      'You • ',
-                                      style: const TextStyle(
+                                      '${isUser ? 'You' : 'Gemini'} • ',
+                                      style: TextStyle(
                                         color:
-                                            Colors
-                                                .blueAccent, // Always blue since all are user messages
+                                            isUser
+                                                ? Colors.blueAccent
+                                                : Colors.orange,
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -2813,7 +2882,7 @@ Current Year: $currentYear''';
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: Text(
-                                        '${item.messageCount} prompts',
+                                        '${item.messageCount} msgs',
                                         style: const TextStyle(
                                           color: Colors.grey,
                                           fontSize: 9,
@@ -3528,13 +3597,24 @@ Current Year: $currentYear''';
           ),
         ],
       ),
-      body: GestureDetector(
-        onTap: () {
-          FocusScope.of(context).unfocus();
+      body: Listener(
+        // Global scroll-wheel capture: scrolling now works no matter where
+        // the cursor is over this screen — over the message list, the
+        // left/right margins, the dash strip, or the hover card — because
+        // the wheel delta is forwarded directly to _scrollController here
+        // instead of relying only on the ListView's own hit-test area.
+        behavior: HitTestBehavior.translucent,
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent && _scrollController.hasClients) {
+            final newOffset = (_scrollController.offset + event.scrollDelta.dy)
+                .clamp(0.0, _scrollController.position.maxScrollExtent);
+            _scrollController.jumpTo(newOffset);
+          }
         },
-        child: Listener(
-          behavior: HitTestBehavior.translucent,
-          onPointerSignal: _handleGlobalPointerSignal,
+        child: GestureDetector(
+          onTap: () {
+            FocusScope.of(context).unfocus();
+          },
           child: Stack(
             children: [
               _webCentered(
@@ -3903,7 +3983,7 @@ Current Year: $currentYear''';
                                 itemBuilder: (context, index) {
                                   if (index < _messages.length) {
                                     return KeyedSubtree(
-                                      key: _keyForMessage(_messages[index]),
+                                      key: _keyForMessage(index),
                                       child: ChatBubbleWithThinking(
                                         message: _messages[index],
                                         enableAutoScroll: _enableAutoScroll,
@@ -4318,7 +4398,6 @@ class GeminiModel {
 }
 
 class ChatMessage {
-  final String id;
   final String text;
   final bool isUser;
   final DateTime timestamp;
@@ -4331,7 +4410,6 @@ class ChatMessage {
   final bool canRetry;
 
   ChatMessage({
-    String? id,
     required this.text,
     required this.isUser,
     required this.timestamp,
@@ -4342,9 +4420,7 @@ class ChatMessage {
     this.thinkingTime,
     this.isIncomplete = false,
     this.canRetry = false,
-  }) : id =
-           id ??
-           '${timestamp.microsecondsSinceEpoch}-${isUser ? "u" : "a"}-${text.hashCode}';
+  });
 }
 
 class _CodeBlock {
@@ -5039,14 +5115,35 @@ class _SearchResultItem {
 }
 
 // ============================================================
-// Compact prompt scrubber.
+// DeepSeek-style scroll scrubber, with these upgrades applied:
 //
-// Navigation points are user messages only. The strip shows a compact,
-// vertically centered window of at most 8 dashes with 5px gaps. Clicking a
-// dash updates the active dash immediately, jumps near the target so the
-// builder creates it, then aligns the real RenderBox to the top of the chat.
-// The dash strip and popup are one hover region, so the popup stays open while
-// moving from the dashes into the card.
+// 1. Pixel-accurate jump. Each message row in the chat is wrapped in a
+//    KeyedSubtree using a GlobalKey supplied by the parent screen through
+//    keyForMessage. When a dash or a hover-card row is tapped, this widget
+//    looks up that message's real RenderBox after the current frame has
+//    settled, reads its actual on-screen offset relative to the scrollable
+//    ancestor, and animates the ScrollController straight to that position
+//    (landing the user's message at the top of the viewport). If a
+//    RenderBox isn't yet resolvable, it falls back to a proportional
+//    estimate so a tap never silently does nothing.
+//
+// 2. Eight-dash sliding window. Only up to eight dashes are ever rendered
+//    at once, tightly packed (small fixed bar thickness + small fixed
+//    gap) and centered vertically in the available space, instead of
+//    stretching every dash across the full height. When there are more
+//    than eight user turns, the window slides to keep the active turn
+//    inside it.
+//
+// 3. Single shared hit-test region for dash column + hover card. The
+//    outer SizedBox is now wide enough to contain BOTH the dash column and
+//    the popup card side by side, so moving the mouse from a dash straight
+//    into the card never crosses outside the MouseRegion's hit-testable
+//    area — which is what used to make the popup vanish before you could
+//    reach it.
+//
+// 4. Click-to-activate. Tapping a dash or a card row immediately marks
+//    that turn as the active one (_activeIndex), instead of the active
+//    dash only ever following the scroll position.
 // ============================================================
 class _MessageScrubber extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -5068,348 +5165,325 @@ class _MessageScrubber extends StatefulWidget {
 }
 
 class _MessageScrubberState extends State<_MessageScrubber> {
-  static const int _maxVisibleDashes = 8;
-  static const double _dashHeight = 14;
-  static const double _dashGap = 5;
-
   bool _showCard = false;
-  int? _activeGlobalIndex;
+  Timer? _hideTimer;
+  int? _activeIndex;
 
-  @override
-  void initState() {
-    super.initState();
-    widget.scrollController.addListener(_updateActiveFromScroll);
+  static const double _dashBarThickness = 4;
+  static const double _dashVisualGap = 6;
+  static const int _maxVisibleDashes = 8;
+  static const double _dashColumnWidth = 26;
+  static const double _cardWidth = 230;
+  static const double _cardGap = 8;
+
+  void _openCard() {
+    _hideTimer?.cancel();
+    if (!_showCard) {
+      setState(() => _showCard = true);
+    }
   }
 
-  @override
-  void didUpdateWidget(covariant _MessageScrubber oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.scrollController != widget.scrollController) {
-      oldWidget.scrollController.removeListener(_updateActiveFromScroll);
-      widget.scrollController.addListener(_updateActiveFromScroll);
-    }
+  void _scheduleClose() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 220), () {
+      if (mounted) {
+        setState(() => _showCard = false);
+      }
+    });
   }
 
   @override
   void dispose() {
-    widget.scrollController.removeListener(_updateActiveFromScroll);
+    _hideTimer?.cancel();
     super.dispose();
-  }
-
-  List<int> _userMessageIndices() {
-    final indices = <int>[];
-    for (int i = 0; i < widget.messages.length; i++) {
-      if (widget.messages[i].isUser) indices.add(i);
-    }
-    return indices;
   }
 
   String _shortPreview(String text) {
     final cleaned = text.replaceAll('\n', ' ').trim();
     if (cleaned.isEmpty) return '(empty message)';
-    final sentenceEnd = cleaned.indexOf(RegExp(r'[.!?]'));
-    final firstSentence =
-        sentenceEnd > 0 ? cleaned.substring(0, sentenceEnd + 1) : cleaned;
-    final words = firstSentence.split(RegExp(r'\s+'));
-    if (words.length <= 12) return firstSentence;
-    return '${words.take(12).join(' ')}...';
+    final words = cleaned.split(RegExp(r'\s+'));
+    if (words.length <= 5) return cleaned;
+    return '${words.take(5).join(' ')}...';
   }
 
-  int _activeIndexInTurns(List<int> turnIndices) {
-    if (turnIndices.isEmpty) return 0;
-    final active = _activeGlobalIndex;
-    if (active != null) {
-      final activeTurn = turnIndices.indexOf(active);
-      if (activeTurn >= 0) return activeTurn;
-    }
-    return 0;
-  }
+  // Falls back to the proportional estimate if a real RenderBox for the
+  // target message cannot be resolved yet, which can happen if the list
+  // is still mid-rebuild at the exact moment of the tap.
+  void _jumpProportionally(int globalIndex) {
+    if (!widget.scrollController.hasClients) return;
 
-  List<int> _visibleWindow(List<int> turnIndices) {
-    if (turnIndices.length <= _maxVisibleDashes) return turnIndices;
-
-    final activeTurn = _activeIndexInTurns(turnIndices);
-    final maxStart = turnIndices.length - _maxVisibleDashes;
-    final start = (activeTurn - 4).clamp(0, maxStart).toInt();
-    final end =
-        (start + _maxVisibleDashes).clamp(0, turnIndices.length).toInt();
-    return turnIndices.sublist(start, end);
-  }
-
-  double _estimateOffset(int globalIndex) {
-    if (!widget.scrollController.hasClients || widget.messages.length <= 1) {
-      return 0.0;
-    }
     final maxScroll = widget.scrollController.position.maxScrollExtent;
-    return ((globalIndex / (widget.messages.length - 1)) * maxScroll)
-        .clamp(0.0, maxScroll)
-        .toDouble();
-  }
+    final total = widget.messages.length;
 
-  Future<bool> _alignBuiltMessageToTop(
-    int globalIndex, {
-    bool animate = true,
-  }) async {
-    if (!mounted || !widget.scrollController.hasClients) return false;
-
-    final key = widget.keyForMessage(globalIndex);
-    final targetContext = key.currentContext;
-    if (targetContext == null) return false;
-
-    // Capture render objects BEFORE any async gap
-    final renderObject = targetContext.findRenderObject();
-    final scrollableContext =
-        widget.scrollController.position.context.storageContext;
-    final scrollableRenderObject = scrollableContext.findRenderObject();
-
-    if (renderObject is! RenderBox || scrollableRenderObject is! RenderBox) {
-      return false;
+    if (total <= 1 || maxScroll <= 0) {
+      widget.scrollController.jumpTo(0);
+      return;
     }
 
-    final y =
-        renderObject
-            .localToGlobal(Offset.zero, ancestor: scrollableRenderObject)
-            .dy;
-    final target = (widget.scrollController.offset + y).clamp(
-      0.0,
-      widget.scrollController.position.maxScrollExtent,
+    final target = (globalIndex / (total - 1)) * maxScroll;
+    widget.scrollController.animateTo(
+      target.clamp(0.0, maxScroll),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
     );
-
-    // Now the async operation
-    if (animate) {
-      await widget.scrollController.animateTo(
-        target.toDouble(),
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-      );
-      // Check mounted after the await
-      if (!mounted) return false;
-    } else {
-      widget.scrollController.jumpTo(target.toDouble());
-    }
-    return true;
   }
 
-  Future<void> _jumpTo(int globalIndex) async {
+  void _jumpTo(int globalIndex) {
     setState(() {
-      _activeGlobalIndex = globalIndex;
+      _activeIndex = globalIndex;
       _showCard = false;
     });
 
-    if (!widget.scrollController.hasClients) return;
+    // Defer until after the current frame so any pending layout from a
+    // just-completed rebuild has finished before we read RenderBox data.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.scrollController.hasClients) return;
 
-    final alreadyBuilt = await _alignBuiltMessageToTop(globalIndex);
-    if (alreadyBuilt) return;
-
-    widget.scrollController.jumpTo(_estimateOffset(globalIndex));
-    await Future<void>.delayed(Duration.zero);
-    await _alignBuiltMessageToTop(globalIndex);
-  }
-
-  void _updateActiveFromScroll() {
-    if (!mounted || !widget.scrollController.hasClients) return;
-    final turnIndices = _userMessageIndices();
-    if (turnIndices.isEmpty) return;
-
-    final scrollableContext =
-        widget.scrollController.position.context.storageContext;
-    final scrollableRenderObject = scrollableContext.findRenderObject();
-    if (scrollableRenderObject is! RenderBox) return;
-
-    int? bestIndex;
-    double bestY = double.negativeInfinity;
-
-    for (final globalIndex in turnIndices) {
       final key = widget.keyForMessage(globalIndex);
-      final context = key.currentContext;
-      if (context == null) continue;
-      final renderObject = context.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.attached) continue;
+      final targetContext = key.currentContext;
 
-      // Use the stored renderObject directly
-      final y =
-          renderObject
-              .localToGlobal(Offset.zero, ancestor: scrollableRenderObject)
-              .dy;
-
-      if (y <= 24 && y > bestY) {
-        bestY = y;
-        bestIndex = globalIndex;
+      if (targetContext == null) {
+        _jumpProportionally(globalIndex);
+        return;
       }
-    }
 
-    bestIndex ??= turnIndices.first;
-    if (bestIndex != _activeGlobalIndex) {
-      setState(() => _activeGlobalIndex = bestIndex);
-    }
+      final renderObject = targetContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) {
+        _jumpProportionally(globalIndex);
+        return;
+      }
+
+      final scrollableContext =
+          widget.scrollController.position.context.storageContext;
+      final scrollableRenderObject = scrollableContext.findRenderObject();
+      if (scrollableRenderObject is! RenderBox) {
+        _jumpProportionally(globalIndex);
+        return;
+      }
+
+      final targetOffsetInScrollable = renderObject.localToGlobal(
+        Offset.zero,
+        ancestor: scrollableRenderObject,
+      );
+
+      final currentScrollOffset = widget.scrollController.offset;
+      final absoluteTarget = currentScrollOffset + targetOffsetInScrollable.dy;
+
+      final maxScroll = widget.scrollController.position.maxScrollExtent;
+
+      widget.scrollController.animateTo(
+        absoluteTarget.clamp(0.0, maxScroll),
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final turnIndices = _userMessageIndices();
-    if (turnIndices.isEmpty) return const SizedBox.shrink();
+    final List<int> turnIndices = [];
+    for (int i = 0; i < widget.messages.length; i++) {
+      if (widget.messages[i].isUser) {
+        turnIndices.add(i);
+      }
+    }
+
+    if (turnIndices.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     final screenHeight = MediaQuery.of(context).size.height;
     final availableHeight =
         screenHeight - widget.topOffset - widget.bottomOffset;
-    if (availableHeight <= 40) return const SizedBox.shrink();
 
-    _activeGlobalIndex ??= turnIndices.first;
-    final visibleTurns = _visibleWindow(turnIndices);
-    final dashCount = visibleTurns.length;
-    final blockHeight = dashCount * _dashHeight + (dashCount - 1) * _dashGap;
-    final top =
-        widget.topOffset +
-        ((availableHeight - blockHeight) / 2)
-            .clamp(0.0, availableHeight)
-            .toDouble();
+    if (availableHeight <= 40) {
+      return const SizedBox.shrink();
+    }
+
+    final int lastTurnGlobalIndex = turnIndices.last;
+    final int effectiveActiveGlobalIndex = _activeIndex ?? lastTurnGlobalIndex;
+
+    // Sliding window: show at most _maxVisibleDashes dashes, centered
+    // around whichever turn is currently active, so a conversation with
+    // more than 8 chats moves the window instead of stretching all
+    // dashes across the full strip height.
+    final int total = turnIndices.length;
+    final int visibleCount =
+        total < _maxVisibleDashes ? total : _maxVisibleDashes;
+
+    int activePos = turnIndices.indexOf(effectiveActiveGlobalIndex);
+    if (activePos == -1) activePos = total - 1;
+
+    int start = activePos - (visibleCount ~/ 2);
+    if (start < 0) start = 0;
+    int end = start + visibleCount;
+    if (end > total) {
+      end = total;
+      start = end - visibleCount;
+      if (start < 0) start = 0;
+    }
+
+    final windowIndices = turnIndices.sublist(start, end);
+
+    // Compact, tightly-packed block instead of one stretched across the
+    // whole strip: fixed bar thickness plus a small fixed gap, centered
+    // vertically in the available space.
+    const double pitch = _dashBarThickness + _dashVisualGap;
+    final double totalBlockHeight =
+        windowIndices.isEmpty
+            ? 0
+            : (windowIndices.length - 1) * pitch + _dashBarThickness;
+
+    double blockTop = (availableHeight - totalBlockHeight) / 2;
+    if (blockTop < 0) blockTop = 0;
+
+    const double outerWidth = _dashColumnWidth + _cardGap + _cardWidth;
 
     return Positioned(
-      right: 12,
-      top: top,
+      right: 6,
+      top: widget.topOffset,
+      bottom: widget.bottomOffset,
       child: MouseRegion(
-        onEnter: (_) => setState(() => _showCard = true),
-        onExit: (_) => setState(() => _showCard = false),
+        onEnter: (_) => _openCard(),
+        onExit: (_) => _scheduleClose(),
         child: SizedBox(
-          width: _showCard ? 294 : 44,
-          height: blockHeight.clamp(40.0, availableHeight).toDouble(),
+          // Wide enough to contain BOTH the dash column and the hover
+          // card, so this single MouseRegion's hit-test area covers the
+          // whole hover path between them — this is what stops the card
+          // from disappearing while the cursor is moving from a dash
+          // toward it.
+          width: outerWidth,
+          height: availableHeight,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              Positioned(
-                right: 0,
-                top: 0,
-                child: SizedBox(
-                  width: 44,
-                  height: blockHeight,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (int i = 0; i < visibleTurns.length; i++) ...[
-                        _DashButton(
-                          isActive: visibleTurns[i] == _activeGlobalIndex,
-                          onTap: () => _jumpTo(visibleTurns[i]),
+              ...windowIndices.asMap().entries.map((entry) {
+                final position = entry.key;
+                final globalIndex = entry.value;
+                final isActive = globalIndex == effectiveActiveGlobalIndex;
+
+                final top = blockTop + position * pitch;
+
+                return Positioned(
+                  top: top,
+                  right: 0,
+                  width: _dashColumnWidth,
+                  child: GestureDetector(
+                    onTap: () => _jumpTo(globalIndex),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 3,
+                          horizontal: 4,
                         ),
-                        if (i != visibleTurns.length - 1)
-                          const SizedBox(height: _dashGap),
-                      ],
-                    ],
+                        color: Colors.transparent,
+                        child: Container(
+                          width: isActive ? 20 : 14,
+                          height: _dashBarThickness,
+                          decoration: BoxDecoration(
+                            color:
+                                isActive
+                                    ? Colors.orange
+                                    : Colors.blue.withAlpha(170),
+                            borderRadius: BorderRadius.circular(3),
+                            boxShadow:
+                                isActive
+                                    ? [
+                                      BoxShadow(
+                                        color: Colors.orange.withAlpha(140),
+                                        blurRadius: 5,
+                                      ),
+                                    ]
+                                    : null,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              }),
+
               Positioned(
-                right: 46,
+                right: _dashColumnWidth + _cardGap,
                 top: 0,
                 child: IgnorePointer(
                   ignoring: !_showCard,
                   child: AnimatedOpacity(
                     opacity: _showCard ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 120),
+                    duration: const Duration(milliseconds: 150),
                     curve: Curves.easeOut,
-                    child: Container(
-                      width: 240,
-                      constraints: BoxConstraints(
-                        maxHeight:
-                            availableHeight.clamp(120.0, 420.0).toDouble(),
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1A1A1A),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.grey.shade700),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black54,
-                            blurRadius: 10,
-                            offset: Offset(-2, 2),
-                          ),
-                        ],
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: turnIndices.length,
-                        itemBuilder: (context, i) {
-                          final globalIndex = turnIndices[i];
-                          final isActive = globalIndex == _activeGlobalIndex;
-                          final preview = _shortPreview(
-                            widget.messages[globalIndex].text,
-                          );
+                    child: MouseRegion(
+                      onEnter: (_) => _openCard(),
+                      onExit: (_) => _scheduleClose(),
+                      child: Container(
+                        width: _cardWidth,
+                        constraints: BoxConstraints(
+                          maxHeight: availableHeight.clamp(120.0, 420.0),
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1A1A),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade700),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black54,
+                              blurRadius: 10,
+                              offset: Offset(-2, 2),
+                            ),
+                          ],
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: turnIndices.length,
+                          itemBuilder: (context, i) {
+                            final globalIndex = turnIndices[i];
+                            final isActive =
+                                globalIndex == effectiveActiveGlobalIndex;
+                            final preview = _shortPreview(
+                              widget.messages[globalIndex].text,
+                            );
 
-                          return InkWell(
-                            onTap: () => _jumpTo(globalIndex),
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 7,
-                              ),
-                              color:
-                                  isActive
-                                      ? Colors.orange.withAlpha(25)
-                                      : Colors.transparent,
-                              child: Text(
-                                preview,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color:
-                                      isActive ? Colors.orange : Colors.white70,
-                                  fontSize: 12,
-                                  fontWeight:
-                                      isActive
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
+                            return InkWell(
+                              onTap: () => _jumpTo(globalIndex),
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 7,
+                                ),
+                                color:
+                                    isActive
+                                        ? Colors.orange.withAlpha(25)
+                                        : Colors.transparent,
+                                child: Text(
+                                  preview,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color:
+                                        isActive
+                                            ? Colors.orange
+                                            : Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight:
+                                        isActive
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                  ),
                                 ),
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DashButton extends StatelessWidget {
-  final bool isActive;
-  final VoidCallback onTap;
-
-  const _DashButton({required this.isActive, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: SizedBox(
-          width: 44,
-          height: _MessageScrubberState._dashHeight,
-          child: Center(
-            child: Container(
-              width: isActive ? 26 : 20,
-              height: isActive ? 5 : 3,
-              decoration: BoxDecoration(
-                color: isActive ? Colors.orange : Colors.blue.withAlpha(170),
-                borderRadius: BorderRadius.circular(3),
-                boxShadow:
-                    isActive
-                        ? [
-                          BoxShadow(
-                            color: Colors.orange.withAlpha(140),
-                            blurRadius: 5,
-                          ),
-                        ]
-                        : null,
-              ),
-            ),
           ),
         ),
       ),
