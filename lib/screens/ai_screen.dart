@@ -56,6 +56,7 @@ class _AIScreenState extends State<AIScreen>
   String _chatSearchQuery = '';
 
   bool _forceNewConversation = false;
+  String? _activeConversationId;
 
   String _currentStreamText = '';
   StreamSubscription<String>? _streamSubscription;
@@ -66,7 +67,7 @@ class _AIScreenState extends State<AIScreen>
   bool _isContinuingResponse = false;
 
   int _retryCount = 0;
-  static const int _maxRetries = 3;
+  static const int _maxRetries = 5;
   String? _lastFailedPrompt;
   List<Uint8List>? _lastFailedImages;
   bool _hasPartialResponse = false;
@@ -520,6 +521,7 @@ class _AIScreenState extends State<AIScreen>
       _lastFailedImages = null;
       _hasPartialResponse = false;
       _partialResponseOnError = '';
+      _activeConversationId = null;
     });
 
     await _loadChatHistoryForModel(newModel);
@@ -580,6 +582,7 @@ class _AIScreenState extends State<AIScreen>
                 ),
               ),
             );
+            _activeConversationId = latestConversation.id;
           });
 
           if (kDebugMode) {
@@ -599,6 +602,11 @@ class _AIScreenState extends State<AIScreen>
           }
         }
       } else {
+        if (mounted) {
+          setState(() {
+            _activeConversationId = null;
+          });
+        }
         if (kDebugMode) {
           print('📭 No saved conversation found for model: $modelId');
         }
@@ -711,11 +719,11 @@ class _AIScreenState extends State<AIScreen>
     String systemPrompt = '''You are a helpful AI assistant.
 
 CRITICAL INSTRUCTIONS:
-1. Focus ONLY on the user's CURRENT/LATEST message
-2. The previous messages are provided for context flow and continuity ONLY
-3. Do NOT repeat, rehash, or discuss previous messages unless specifically asked
-4. Answer the CURRENT question directly and completely
-5. Keep your response focused on what was JUST asked
+1. Answer the user's CURRENT/LATEST message as the main task
+2. The previous messages are provided so you have real memory of this conversation - use them whenever the user refers to something said earlier (e.g. "what did I just say", "continue that", "as I mentioned")
+3. Do not pretend you have no memory of earlier turns in this same conversation - they are provided below and are real
+4. Do not repeat earlier turns back verbatim unless asked
+5. Keep your response focused on what was JUST asked, using earlier turns only as supporting context
 
 Current Date: $currentDate
 Current Time: $currentTime
@@ -751,12 +759,17 @@ Current Year: $currentYear''';
       'parts': [
         {
           'text':
-              'Understood. I will focus on the CURRENT message and use previous context only for continuity.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate, year: $currentYear.${_enableThinking ? ' I will use the thinking format as specified.' : ''}',
+              'Understood. I have access to the full conversation history below and will use it as real memory.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate, year: $currentYear.${_enableThinking ? ' I will use the thinking format as specified.' : ''}',
         },
       ],
     });
 
-    if (_enableSmartContext && _messages.isNotEmpty) {
+    // Always send the current message together with prior turns from
+    // this same conversation, capped at _maxContextMessages (user
+    // configurable, default 10). This is what lets the model answer
+    // "what did I just say" correctly instead of claiming it has no
+    // memory - previously only the current prompt was ever sent.
+    if (_messages.isNotEmpty) {
       final chatMessages =
           _messages
               .where(
@@ -771,6 +784,8 @@ Current Year: $currentYear''';
       if (chatMessages.length <= _maxContextMessages) {
         contextMessages = chatMessages;
       } else {
+        // Keep the earliest 2 turns (sets topic/intent) plus the most
+        // recent (_maxContextMessages - 2) turns.
         contextMessages = [
           ...chatMessages.take(2),
           ...chatMessages.skip(chatMessages.length - (_maxContextMessages - 2)),
@@ -785,7 +800,7 @@ Current Year: $currentYear''';
         contents.add({
           'role': 'model',
           'parts': [
-            {'text': 'Noted. I\'ll focus on recent context.'},
+            {'text': 'Noted. I\'ll keep that context in mind.'},
           ],
         });
       }
@@ -801,10 +816,7 @@ Current Year: $currentYear''';
     }
 
     final List<Map<String, dynamic>> currentParts = [
-      {
-        'text':
-            '>>> NEW REQUEST (Please focus on answering THIS specifically) <<<\n\n$currentPrompt',
-      },
+      {'text': currentPrompt},
     ];
 
     if (currentImages != null && currentImages.isNotEmpty) {
@@ -827,6 +839,13 @@ Current Year: $currentYear''';
     String prompt, {
     List<Uint8List>? images,
   }) async* {
+    // When streaming is turned off in Settings, we still call the
+    // streaming endpoint (both web proxy and direct API support SSE)
+    // but buffer every chunk locally and only yield once at the very
+    // end. This gives a single non-streamed pop-in response instead of
+    // watching text build up, matching what "Streaming: off" should do.
+    final bool streamMode = _enableStreaming;
+
     final String url =
         kIsWeb
             ? 'https://us-central1-lifematters-c466d.cloudfunctions.net/geminiProxy?model=$_selectedModel&streaming=true'
@@ -869,7 +888,7 @@ Current Year: $currentYear''';
 
     if (kDebugMode) {
       print(
-        '🔗 Sending request with SMART CONTEXT (max $_maxContextMessages messages)',
+        '🔗 Sending request with SMART CONTEXT (max $_maxContextMessages messages), streamMode=$streamMode',
       );
       print('📝 Current prompt: $prompt');
       if (images != null && images.isNotEmpty) {
@@ -877,74 +896,80 @@ Current Year: $currentYear''';
       }
     }
 
-    try {
-      final request = http.Request('POST', Uri.parse(url));
-      request.headers.addAll(headers);
-      request.body = jsonEncode(requestBody);
+    final request = http.Request('POST', Uri.parse(url));
+    request.headers.addAll(headers);
+    request.body = jsonEncode(requestBody);
 
-      final streamedResponse = await request.send();
+    final streamedResponse = await request.send();
 
-      if (streamedResponse.statusCode != 200) {
-        final errorBody = await streamedResponse.stream.bytesToString();
-        throw Exception(
-          'API request failed with status ${streamedResponse.statusCode}: $errorBody',
-        );
-      }
+    if (streamedResponse.statusCode != 200) {
+      final errorBody = await streamedResponse.stream.bytesToString();
+      throw Exception(
+        'API request failed with status ${streamedResponse.statusCode}: $errorBody',
+      );
+    }
 
-      String buffer = '';
-      await for (final chunk in streamedResponse.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
-        if (chunk.trim().isEmpty) continue;
+    String buffer = '';
+    String fullBufferedText = '';
 
-        if (chunk.startsWith('data: ')) {
-          final jsonString = chunk.substring(6);
+    await for (final chunk in streamedResponse.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())) {
+      if (chunk.trim().isEmpty) continue;
 
-          if (jsonString == '[DONE]') {
-            if (kDebugMode) {
-              print('✅ Streaming complete');
-            }
-            break;
+      if (chunk.startsWith('data: ')) {
+        final jsonString = chunk.substring(6);
+
+        if (jsonString == '[DONE]') {
+          if (kDebugMode) {
+            print('✅ Streaming complete');
           }
+          break;
+        }
 
-          try {
-            final jsonData = jsonDecode(jsonString);
+        try {
+          final jsonData = jsonDecode(jsonString);
 
-            if (jsonData['candidates'] != null &&
-                jsonData['candidates'].isNotEmpty) {
-              final candidate = jsonData['candidates'][0];
-              if (candidate['content'] != null &&
-                  candidate['content']['parts'] != null) {
-                final parts = candidate['content']['parts'];
-                if (parts.isNotEmpty && parts[0]['text'] != null) {
-                  final text = parts[0]['text'] as String;
-                  if (text.isNotEmpty) {
-                    buffer += text;
+          if (jsonData['candidates'] != null &&
+              jsonData['candidates'].isNotEmpty) {
+            final candidate = jsonData['candidates'][0];
+            if (candidate['content'] != null &&
+                candidate['content']['parts'] != null) {
+              final parts = candidate['content']['parts'];
+              if (parts.isNotEmpty && parts[0]['text'] != null) {
+                final text = parts[0]['text'] as String;
+                if (text.isNotEmpty) {
+                  buffer += text;
 
-                    if (_enableThinking &&
-                        buffer.contains('THINKING_START') &&
-                        !buffer.contains('THINKING_END')) {
-                      continue;
-                    }
+                  if (_enableThinking &&
+                      buffer.contains('THINKING_START') &&
+                      !buffer.contains('THINKING_END')) {
+                    continue;
+                  }
 
+                  if (streamMode) {
                     yield buffer;
+                    buffer = '';
+                  } else {
+                    fullBufferedText += buffer;
                     buffer = '';
                   }
                 }
               }
             }
-          } catch (e) {
-            if (kDebugMode) {
-              print('⚠️ JSON parsing error: $e');
-            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('⚠️ JSON parsing error: $e');
           }
         }
       }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Stream request error: $e');
-      }
-      rethrow;
+    }
+
+    if (!streamMode) {
+      // Non-streaming mode: emit everything as one final chunk so the UI
+      // pops in the complete answer at once, exactly like the request.
+      yield fullBufferedText;
     }
   }
 
@@ -994,6 +1019,17 @@ Current Year: $currentYear''';
     );
   }
 
+  // Retries with growing backoff (1s, 2s, 4s, 8s, 16s) before finally
+  // showing the error bubble, so a flaky/slow connection gets several
+  // automatic chances to recover instead of failing on the first hiccup.
+  Future<void> _sendWithBackoffRetry(
+    String prompt, {
+    List<Uint8List>? images,
+    required bool isRetry,
+  }) async {
+    await _sendGeminiMessageInternal(prompt, images: images, isRetry: isRetry);
+  }
+
   Future<void> _continueIncompleteResponse() async {
     if (_lastIncompleteResponse.isEmpty) {
       final lastIncomplete = _messages.lastWhere(
@@ -1021,11 +1057,16 @@ Current Year: $currentYear''';
       _currentStreamText = '';
     });
 
+    final String incompleteSnapshot = _lastIncompleteResponse;
+
     try {
       String accumulatedResponse = '';
 
       _streamSubscription = _streamGeminiResponse(
-        "Continue your previous response from exactly where you stopped. Do not repeat what you already said. Just continue the text seamlessly.",
+        "Continue your previous response from exactly where you stopped. "
+        "Do not repeat any part of what you already said, and do not "
+        "restate or re-summarize prior content - only produce the new "
+        "continuation text that comes after the cutoff point.",
       ).listen(
         (chunk) {
           if (!mounted) return;
@@ -1055,11 +1096,25 @@ Current Year: $currentYear''';
         onDone: () async {
           if (!mounted) return;
 
-          final continuedResponse =
-              _lastIncompleteResponse + accumulatedResponse;
+          // Guard against duplicated text: if the model ignored the
+          // instruction and re-sent part/all of the original incomplete
+          // response at the start of its continuation, strip that
+          // overlap before stitching the two halves together. This is
+          // what previously caused "Continue" to show duplicate
+          // sentences or duplicate code blocks.
+          String continuation = accumulatedResponse;
+          final overlapLen = _findOverlapLength(
+            incompleteSnapshot,
+            continuation,
+          );
+          if (overlapLen > 0) {
+            continuation = continuation.substring(overlapLen);
+          }
+
+          final continuedResponse = incompleteSnapshot + continuation;
 
           setState(() {
-            _messages.removeWhere((msg) => msg.text == _lastIncompleteResponse);
+            _messages.removeWhere((msg) => msg.text == incompleteSnapshot);
             _messages.add(
               ChatMessage(
                 text: continuedResponse,
@@ -1089,6 +1144,23 @@ Current Year: $currentYear''';
         _resetContinueState();
       });
     }
+  }
+
+  // Finds how many leading characters of `continuation` duplicate the
+  // trailing characters of `original`, so that overlap can be trimmed
+  // before the two are joined. Checks progressively shorter suffixes of
+  // `original` (capped for performance) against the start of
+  // `continuation` and returns the longest match found.
+  int _findOverlapLength(String original, String continuation) {
+    final int maxCheck =
+        original.length < 400 ? original.length : 400;
+    for (int len = maxCheck; len > 0; len--) {
+      final suffix = original.substring(original.length - len);
+      if (continuation.startsWith(suffix)) {
+        return len;
+      }
+    }
+    return 0;
   }
 
   void _resetContinueState() {
@@ -1141,48 +1213,53 @@ Current Year: $currentYear''';
     return 'Finalizing the answer';
   }
 
+  // Centralized conversation resolution used by _saveConversation so the
+  // same conversation row is reused for the lifetime of a chat (fixes
+  // duplicate-conversation creation) while a distinct new chat (started
+  // via "New Chat") always gets its own fresh id and never collides with
+  // an existing one.
+  Future<ConversationHive> _resolveCurrentConversation() async {
+    if (_forceNewConversation || _activeConversationId == null) {
+      final conversationId =
+          '${DateTime.now().millisecondsSinceEpoch}_${_conversationBox.length}';
+      final conversation =
+          ConversationHive()
+            ..id = conversationId
+            ..lastMessageTimestamp = DateTime.now()
+            ..messageCount = _messages.length
+            ..modelUsed = _selectedModel;
+
+      await _conversationBox.add(conversation);
+      _forceNewConversation = false;
+      _activeConversationId = conversationId;
+      return conversation;
+    }
+
+    // Reuse the existing conversation this screen is already attached to.
+    final existing = _conversationBox.values.firstWhere(
+      (c) => c.id == _activeConversationId,
+      orElse: () => ConversationHive()
+        ..id = _activeConversationId!
+        ..lastMessageTimestamp = DateTime.now()
+        ..messageCount = 0
+        ..modelUsed = _selectedModel,
+    );
+
+    if (!_conversationBox.values.any((c) => c.id == _activeConversationId)) {
+      await _conversationBox.add(existing);
+    }
+
+    return existing;
+  }
+
   Future<void> _saveConversation() async {
     if (!_enableHistory || _messages.isEmpty) return;
 
     try {
-      final conversations =
-          _conversationBox.values
-              .where((conv) => conv.modelUsed == _selectedModel)
-              .toList()
-            ..sort(
-              (a, b) =>
-                  b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-            );
-
-      ConversationHive currentConversation;
-
-      if (_forceNewConversation) {
-        final conversationId = DateTime.now().millisecondsSinceEpoch.toString();
-        currentConversation =
-            ConversationHive()
-              ..id = conversationId
-              ..lastMessageTimestamp = DateTime.now()
-              ..messageCount = _messages.length
-              ..modelUsed = _selectedModel;
-
-        await _conversationBox.add(currentConversation);
-        _forceNewConversation = false;
-      } else if (conversations.isNotEmpty) {
-        currentConversation = conversations.first;
-        currentConversation.lastMessageTimestamp = DateTime.now();
-        currentConversation.messageCount = _messages.length;
-        await currentConversation.save();
-      } else {
-        final conversationId = DateTime.now().millisecondsSinceEpoch.toString();
-        currentConversation =
-            ConversationHive()
-              ..id = conversationId
-              ..lastMessageTimestamp = DateTime.now()
-              ..messageCount = _messages.length
-              ..modelUsed = _selectedModel;
-
-        await _conversationBox.add(currentConversation);
-      }
+      final currentConversation = await _resolveCurrentConversation();
+      currentConversation.lastMessageTimestamp = DateTime.now();
+      currentConversation.messageCount = _messages.length;
+      await currentConversation.save();
 
       final finalConversationId = currentConversation.id;
 
@@ -1244,6 +1321,7 @@ Current Year: $currentYear''';
       _hasPartialResponse = false;
       _partialResponseOnError = '';
       _forceNewConversation = true;
+      _activeConversationId = null;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1256,21 +1334,21 @@ Current Year: $currentYear''';
   }
 
   // ============================================================
-  // Two-phase precise jump used by search-result taps.
+  // Two-phase precise jump used by search-result taps and scrubber taps.
   //
-  // Why this exists: the old implementation multiplied the target index
-  // by a flat 100px "itemHeight" guess. That is meaningless once messages
-  // have different heights (a one-line reply vs. a 1000-line code block),
-  // so it never actually lands on the right message. This version reads
-  // the target message's real on-screen RenderBox (via its GlobalKey)
-  // once the list has had a chance to build it, and scrolls so that
-  // message's top edge lands at the top of the viewport. If the target
-  // is far outside the currently built range and its RenderBox isn't
-  // available yet, it jumps close proportionally first, waits briefly for
-  // ListView.builder to lay out the now-nearby target, then refines to the
-  // exact pixel position.
+  // Reads the target message's real on-screen RenderBox (via its
+  // GlobalKey) once the list has had a chance to build it, and scrolls so
+  // that message's top edge lands at the top of the viewport. If the
+  // target is far outside the currently built range and its RenderBox
+  // isn't available yet, it jumps close proportionally first, waits
+  // briefly for ListView.builder to lay out the now-nearby target, then
+  // refines to the exact pixel position. This refine step now retries
+  // several times (not just once) because a single 380ms wait was not
+  // always enough once the list contains hundreds of long messages -
+  // that mismatch is what made jumping "not actually land on the right
+  // message" for larger chats.
   // ============================================================
-  void _preciseJumpToIndex(int targetIndex) {
+  void _preciseJumpToIndex(int targetIndex, {int attemptsLeft = 6}) {
     if (targetIndex <= 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _scrollController.hasClients) {
@@ -1289,26 +1367,22 @@ Current Year: $currentYear''';
         return;
       }
       final target = (targetIndex / (total - 1)) * maxScroll;
-      _scrollController.animateTo(
-        target.clamp(0.0, maxScroll),
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOut,
-      );
+      _scrollController.jumpTo(target.clamp(0.0, maxScroll));
     }
 
-    void refineToExactPosition() {
-      if (!mounted || !_scrollController.hasClients) return;
+    bool tryRefine() {
+      if (!mounted || !_scrollController.hasClients) return false;
 
       final retryContext = _messageKeys[targetIndex]?.currentContext;
-      if (retryContext == null) return;
+      if (retryContext == null) return false;
 
       final renderObject = retryContext.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.attached) return;
+      if (renderObject is! RenderBox || !renderObject.attached) return false;
 
       final scrollableContext =
           _scrollController.position.context.storageContext;
       final scrollableRenderObject = scrollableContext.findRenderObject();
-      if (scrollableRenderObject is! RenderBox) return;
+      if (scrollableRenderObject is! RenderBox) return false;
 
       final targetOffsetInScrollable = renderObject.localToGlobal(
         Offset.zero,
@@ -1321,9 +1395,25 @@ Current Year: $currentYear''';
 
       _scrollController.animateTo(
         absoluteTarget.clamp(0.0, maxScroll),
-        duration: const Duration(milliseconds: 300),
+        duration: const Duration(milliseconds: 260),
         curve: Curves.easeOut,
       );
+      return true;
+    }
+
+    void refineWithRetries(int remaining) {
+      if (remaining <= 0) return;
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (!mounted) return;
+        final succeeded = tryRefine();
+        if (!succeeded) {
+          refineWithRetries(remaining - 1);
+        } else if (remaining > 1) {
+          // one more refine pass shortly after, in case layout still
+          // settles further (e.g. images loading changed row height)
+          Future.delayed(const Duration(milliseconds: 220), tryRefine);
+        }
+      });
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1333,20 +1423,14 @@ Current Year: $currentYear''';
 
       if (targetContext == null) {
         proportionalFallback();
-        Future.delayed(
-          const Duration(milliseconds: 380),
-          refineToExactPosition,
-        );
+        refineWithRetries(attemptsLeft);
         return;
       }
 
       final renderObject = targetContext.findRenderObject();
       if (renderObject is! RenderBox || !renderObject.attached) {
         proportionalFallback();
-        Future.delayed(
-          const Duration(milliseconds: 380),
-          refineToExactPosition,
-        );
+        refineWithRetries(attemptsLeft);
         return;
       }
 
@@ -1432,6 +1516,14 @@ Current Year: $currentYear''';
           }).toList(),
         );
         _forceNewConversation = false;
+        // This is THE key fix for "chat continues under a new entry
+        // instead of the original 10-message conversation growing to
+        // 11": once a conversation is opened (from search or otherwise),
+        // this screen must keep using its id for every subsequent save,
+        // not silently fall back to "most recent conversation for this
+        // model" (which _resolveCurrentConversation used to do before
+        // this field existed).
+        _activeConversationId = conversationId;
       });
 
       if (foundTarget) {
@@ -1446,9 +1538,9 @@ Current Year: $currentYear''';
         _preciseJumpToIndex(targetIndex);
       } else {
         // No specific message requested (e.g. opening a chat without a
-        // search context) — keep the previous behavior of snapping to the
-        // latest content.
-        _scheduleAutoScroll();
+        // search context) — jump to the very first message of that
+        // conversation, since that's "where the chat starts".
+        _preciseJumpToIndex(0);
       }
     } catch (e) {
       if (kDebugMode) {
@@ -1573,10 +1665,32 @@ Current Year: $currentYear''';
             }
           });
 
+          // Auto-scroll only follows new content when the user hasn't
+          // deliberately scrolled up. Because _userScrolledUp gates
+          // _scheduleAutoScroll internally, scrolling up mid-stream is
+          // respected: the reply keeps streaming in the background, the
+          // viewport just stops being force-jumped to the bottom, exactly
+          // like other AI chat apps.
           _scheduleAutoScroll();
         },
-        onError: (error) {
+        onError: (error) async {
           if (!mounted) return;
+
+          // Automatic retry with growing backoff before giving up, so a
+          // flaky or momentarily-down connection gets several chances to
+          // recover instead of immediately showing an error bubble.
+          if (_retryCount < _maxRetries) {
+            final backoffSeconds = 1 << _retryCount; // 1,2,4,8,16
+            _retryCount++;
+            await Future.delayed(Duration(seconds: backoffSeconds));
+            if (!mounted) return;
+            await _sendWithBackoffRetry(
+              prompt,
+              images: images,
+              isRetry: true,
+            );
+            return;
+          }
 
           final partialText = _partialResponseOnError;
           final hasPartial = _hasPartialResponse && partialText.isNotEmpty;
@@ -1603,12 +1717,11 @@ Current Year: $currentYear''';
 
             _messages.add(
               ChatMessage(
-                text:
-                    'Error: ${error.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry below to try again." : "Maximum retries reached."}',
+                text: 'Network error after several attempts. Tap Retry below.',
                 isUser: false,
                 timestamp: DateTime.now(),
                 isError: true,
-                canRetry: _retryCount < _maxRetries,
+                canRetry: true,
               ),
             );
             _resetMessageState();
@@ -1741,6 +1854,69 @@ Current Year: $currentYear''';
         }
       }
     });
+  }
+
+  // Smoothly animates all the way to the bottom instead of jumping. The
+  // old version used a single jumpTo call, which on a long/scaled chat
+  // could land mid-list because maxScrollExtent hadn't been recalculated
+  // yet for content still being laid out - hence "have to press again".
+  // This retries the jump across a couple of frames so it reliably lands
+  // exactly at the bottom even while the list is still growing.
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+
+    void jumpOnce() {
+      if (!mounted || !_scrollController.hasClients) return;
+      final max = _scrollController.position.maxScrollExtent;
+      _scrollController.animateTo(
+        max,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOut,
+      );
+    }
+
+    jumpOnce();
+    // Re-issue a couple of times shortly after in case maxScrollExtent
+    // grows (streaming content, images loading, or newly built rows).
+    Future.delayed(const Duration(milliseconds: 150), jumpOnce);
+    Future.delayed(const Duration(milliseconds: 350), jumpOnce);
+
+    setState(() {
+      _showScrollButton = false;
+      _userScrolledUp = false;
+    });
+  }
+
+  Widget _buildScrollToBottomButton() {
+    if (!_showScrollButton) return const SizedBox.shrink();
+
+    return Positioned(
+      bottom: 80,
+      left: 12,
+      child: GestureDetector(
+        onTap: _scrollToBottom,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.green,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(100),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.arrow_downward,
+            color: Colors.white,
+            size: 20,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadUserProfile() async {
@@ -2018,7 +2194,7 @@ Current Year: $currentYear''';
                               style: TextStyle(color: Colors.white),
                             ),
                             subtitle: const Text(
-                              'Enable real-time response streaming',
+                              'Enable real-time response streaming (off = full reply appears at once)',
                               style: TextStyle(color: Colors.white54),
                             ),
                             value: _enableStreaming,
@@ -2145,7 +2321,7 @@ Current Year: $currentYear''';
                               style: TextStyle(color: Colors.white),
                             ),
                             subtitle: Text(
-                              '$_maxContextMessages messages',
+                              '$_maxContextMessages messages sent to the AI as memory',
                               style: const TextStyle(color: Colors.white54),
                             ),
                             trailing: SizedBox(
@@ -2153,8 +2329,8 @@ Current Year: $currentYear''';
                               child: Slider(
                                 value: _maxContextMessages.toDouble(),
                                 min: 5,
-                                max: 50,
-                                divisions: 9,
+                                max: 100,
+                                divisions: 19,
                                 activeColor: Colors.green,
                                 inactiveColor: Colors.grey.shade700,
                                 onChanged: (value) {
@@ -2368,52 +2544,14 @@ Current Year: $currentYear''';
     );
   }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      setState(() {
-        _showScrollButton = false;
-        _userScrolledUp = false;
-      });
-    }
-  }
-
-  Widget _buildScrollToBottomButton() {
-    if (!_showScrollButton) return const SizedBox.shrink();
-
-    return Positioned(
-      bottom: 80,
-      left: 12,
-      child: GestureDetector(
-        onTap: _scrollToBottom,
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.green,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withAlpha(100),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.arrow_downward,
-            color: Colors.white,
-            size: 20,
-          ),
-        ),
-      ),
-    );
-  }
-
   // ============================================================
   // Scroll scrubber entry point: builds the compact dash strip plus its
   // hover card, backed by GlobalKey-based precise jumping, an 8-dash
   // sliding window, and a single shared hit-test region for dash + card.
+  // Also hosts the small circular progress indicator placed just above
+  // the dashes, and now drives a scroll-speed multiplier for the mouse
+  // wheel (press-and-hold on the strip = fast scroll) as well as a
+  // "shrink as the chat grows" sizing rule for the whole strip.
   // ============================================================
   Widget _buildScrollProgressIndicator() {
     if (!kIsWeb || _messages.isEmpty || !_scrollController.hasClients) {
@@ -2635,6 +2773,22 @@ Current Year: $currentYear''';
     );
   }
 
+  // ============================================================
+  // Chat search screen.
+  //
+  // Fix applied here: the search box now filters progressively as you
+  // type, character by character, the way "type h -> see all matches
+  // with h, type hi -> narrow to hi" is supposed to work. The underlying
+  // list (allResults) is unchanged and always built fresh from every
+  // conversation for the current model; filteredResults is recomputed
+  // from _chatSearchQuery on every keystroke (after the existing 300ms
+  // debounce), so the filtering was already structurally correct - the
+  // real bug was in jump targeting (now fixed via _loadSpecificConversation
+  // always resolving to conversation start or the exact matched message),
+  // and in duplicate conversation creation polluting the results with
+  // near-identical entries (now fixed via _resolveCurrentConversation /
+  // _activeConversationId so one chat = one conversation row).
+  // ============================================================
   Widget _buildChatSearchScreen() {
     return StatefulBuilder(
       builder: (context, setSearchState) {
@@ -2656,13 +2810,15 @@ Current Year: $currentYear''';
               _chatBox.values.where((m) => m.conversationId == conv.id).toList()
                 ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
+          if (msgs.isEmpty) continue;
+
           // Search results should only ever be built from the USER'S
           // messages, never the AI's replies — the preview shown, the
           // matching, and the jump target are all the user's own words.
           final userMsgs = msgs.where((m) => m.isUser).toList();
 
           for (final msg in userMsgs) {
-            if (msg.text.trim().length < 3) continue;
+            if (msg.text.trim().length < 2) continue;
 
             String conversationTitle = 'Chat';
             final firstUserMsg = msgs.firstWhere(
@@ -2749,13 +2905,24 @@ Current Year: $currentYear''';
                     ),
                   ),
                   onChanged: (value) {
+                    // Update immediately for responsive filtering, and
+                    // also debounce a follow-up rebuild so heavy queries
+                    // (large history) don't rebuild on every single
+                    // keystroke needlessly. The immediate setSearchState
+                    // call is what makes "type h, see h-matches; type i,
+                    // narrow to hi-matches" work without a visible lag.
+                    setSearchState(() {
+                      _chatSearchQuery = value;
+                    });
                     _searchDebounce?.cancel();
                     _searchDebounce = Timer(
-                      const Duration(milliseconds: 300),
+                      const Duration(milliseconds: 150),
                       () {
-                        setSearchState(() {
-                          _chatSearchQuery = value;
-                        });
+                        if (mounted) {
+                          setSearchState(() {
+                            _chatSearchQuery = value;
+                          });
+                        }
                       },
                     );
                   },
@@ -3005,6 +3172,7 @@ Current Year: $currentYear''';
           _retryCount = 0;
           _lastFailedPrompt = null;
           _lastFailedImages = null;
+          _activeConversationId = null;
         });
       }
 
@@ -3587,11 +3755,22 @@ Current Year: $currentYear''';
         // left/right margins, the dash strip, or the hover card — because
         // the wheel delta is forwarded directly to _scrollController here
         // instead of relying only on the ListView's own hit-test area.
+        //
+        // Fix applied: previously the multiplier here was effectively
+        // doubled versus scrolling with the mouse directly over the
+        // ListView (which uses the platform's native, un-multiplied wheel
+        // delta), making scroll-up feel much faster than scroll-down, or
+        // the whole page feel "twice as fast" as expected. The delta is
+        // now scaled down to bring wheel-scroll speed in this Listener in
+        // line with native ListView scrolling.
         behavior: HitTestBehavior.translucent,
         onPointerSignal: (event) {
           if (event is PointerScrollEvent && _scrollController.hasClients) {
-            final newOffset = (_scrollController.offset + event.scrollDelta.dy)
-                .clamp(0.0, _scrollController.position.maxScrollExtent);
+            const double wheelSpeedMultiplier = 0.5;
+            final newOffset =
+                (_scrollController.offset +
+                        event.scrollDelta.dy * wheelSpeedMultiplier)
+                    .clamp(0.0, _scrollController.position.maxScrollExtent);
             _scrollController.jumpTo(newOffset);
           }
         },
@@ -3897,7 +4076,7 @@ Current Year: $currentYear''';
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: Enabled',
+                                      'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: ${_enableStreaming ? "Enabled" : "Disabled"}',
                                       style: const TextStyle(
                                         color: Colors.blue,
                                         fontSize: 12,
@@ -4862,18 +5041,21 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
+  // Retry is now a distinct blue/teal color scheme instead of red, so it
+  // is visually distinguishable from the red error message text and the
+  // red-styled error state it sits below.
   Widget _buildRetryButton() {
     return Container(
       margin: const EdgeInsets.only(top: 12),
       child: ElevatedButton(
         onPressed: widget.onRetryPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.red.withAlpha(30),
-          foregroundColor: Colors.redAccent,
+          backgroundColor: Colors.teal.withAlpha(30),
+          foregroundColor: Colors.tealAccent,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
-            side: BorderSide(color: Colors.redAccent.withAlpha(100), width: 1),
+            side: BorderSide(color: Colors.tealAccent.withAlpha(100), width: 1),
           ),
         ),
         child: const Row(
@@ -5108,26 +5290,28 @@ class _SearchResultItem {
 //    settled, reads its actual on-screen offset relative to the scrollable
 //    ancestor, and animates the ScrollController straight to that position
 //    (landing the user's message at the top of the viewport). If a
-//    RenderBox isn't yet resolvable, it falls back to a proportional
-//    estimate so a tap never silently does nothing.
+//    RenderBox isn't yet resolvable, it retries several times with a
+//    proportional-jump fallback in between, instead of only trying once.
 //
-// 2. Eight-dash sliding window. Only up to eight dashes are ever rendered
-//    at once, tightly packed (small fixed bar thickness + small fixed
-//    gap) and centered vertically in the available space, instead of
-//    stretching every dash across the full height. When there are more
-//    than eight user turns, the window slides to keep the active turn
-//    inside it.
+// 2. Sliding window that shrinks as the chat grows. Up to 8 dashes are
+//    shown when the conversation is small; the window and each dash
+//    shrink slightly as the number of turns grows, so a very long chat's
+//    scrubber stays compact instead of stretching indefinitely.
 //
-// 3. Single shared hit-test region for dash column + hover card. The
-//    outer SizedBox is now wide enough to contain BOTH the dash column and
-//    the popup card side by side, so moving the mouse from a dash straight
-//    into the card never crosses outside the MouseRegion's hit-testable
-//    area — which is what used to make the popup vanish before you could
-//    reach it.
+// 3. The hover/click popup card is now capped to the exact height of the
+//    dash column (never taller than the strip of dashes) and is width-
+//    matched so it visually reads as "the dashes, expanded" rather than a
+//    separate, differently-sized panel.
 //
-// 4. Click-to-activate. Tapping a dash or a card row immediately marks
-//    that turn as the active one (_activeIndex), instead of the active
-//    dash only ever following the scroll position.
+// 4. Spacing between dashes is doubled from the original tightly-packed
+//    layout so individual turns are easier to distinguish and target.
+//
+// 5. A small circular progress indicator sits just above the dash column,
+//    showing overall scroll progress (0-100% through the conversation).
+//
+// 6. Press-and-hold acceleration: holding down on a dash (or the track)
+//    steadily accelerates continuous scrolling up or down while held,
+//    instead of only supporting discrete taps-to-jump.
 // ============================================================
 class _MessageScrubber extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -5152,13 +5336,36 @@ class _MessageScrubberState extends State<_MessageScrubber> {
   bool _showCard = false;
   Timer? _hideTimer;
   int? _activeIndex;
+  double _scrollProgress = 0.0;
 
-  static const double _dashBarThickness = 4;
-  static const double _dashVisualGap = 6;
+  Timer? _pressHoldTimer;
+  double _pressHoldSpeed = 0.0;
+
+  static const double _dashVisualGapBase = 12; // doubled from original 6
   static const int _maxVisibleDashes = 8;
   static const double _dashColumnWidth = 26;
-  static const double _cardWidth = 230;
   static const double _cardGap = 8;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_updateScrollProgress);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateScrollProgress(),
+    );
+  }
+
+  void _updateScrollProgress() {
+    if (!widget.scrollController.hasClients) return;
+    final max = widget.scrollController.position.maxScrollExtent;
+    final offset = widget.scrollController.offset;
+    final progress = max <= 0 ? 1.0 : (offset / max).clamp(0.0, 1.0);
+    if (mounted) {
+      setState(() {
+        _scrollProgress = progress;
+      });
+    }
+  }
 
   void _openCard() {
     _hideTimer?.cancel();
@@ -5178,7 +5385,9 @@ class _MessageScrubberState extends State<_MessageScrubber> {
 
   @override
   void dispose() {
+    widget.scrollController.removeListener(_updateScrollProgress);
     _hideTimer?.cancel();
+    _pressHoldTimer?.cancel();
     super.dispose();
   }
 
@@ -5212,28 +5421,38 @@ class _MessageScrubberState extends State<_MessageScrubber> {
     );
   }
 
-  void _jumpTo(int globalIndex) {
+  void _jumpTo(int globalIndex, {int attemptsLeft = 6}) {
     setState(() {
       _activeIndex = globalIndex;
       _showCard = false;
     });
 
-    // Defer until after the current frame so any pending layout from a
-    // just-completed rebuild has finished before we read RenderBox data.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    void tryOnce(int remaining) {
       if (!mounted || !widget.scrollController.hasClients) return;
 
       final key = widget.keyForMessage(globalIndex);
       final targetContext = key.currentContext;
 
       if (targetContext == null) {
-        _jumpProportionally(globalIndex);
+        if (remaining == attemptsLeft) _jumpProportionally(globalIndex);
+        if (remaining > 0) {
+          Future.delayed(
+            const Duration(milliseconds: 200),
+            () => tryOnce(remaining - 1),
+          );
+        }
         return;
       }
 
       final renderObject = targetContext.findRenderObject();
       if (renderObject is! RenderBox || !renderObject.attached) {
-        _jumpProportionally(globalIndex);
+        if (remaining == attemptsLeft) _jumpProportionally(globalIndex);
+        if (remaining > 0) {
+          Future.delayed(
+            const Duration(milliseconds: 200),
+            () => tryOnce(remaining - 1),
+          );
+        }
         return;
       }
 
@@ -5252,7 +5471,6 @@ class _MessageScrubberState extends State<_MessageScrubber> {
 
       final currentScrollOffset = widget.scrollController.offset;
       final absoluteTarget = currentScrollOffset + targetOffsetInScrollable.dy;
-
       final maxScroll = widget.scrollController.position.maxScrollExtent;
 
       widget.scrollController.animateTo(
@@ -5260,7 +5478,38 @@ class _MessageScrubberState extends State<_MessageScrubber> {
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeOut,
       );
+    }
+
+    // Defer until after the current frame so any pending layout from a
+    // just-completed rebuild has finished before we read RenderBox data.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      tryOnce(attemptsLeft);
     });
+  }
+
+  // Press-and-hold fast scroll: while the pointer is down on a dash or
+  // the track, keep advancing the scroll offset every 16ms, ramping speed
+  // up the longer it's held, in either direction depending on where
+  // relative to the active position the press started.
+  void _startPressHold(bool scrollDown) {
+    _pressHoldTimer?.cancel();
+    _pressHoldSpeed = 6.0;
+    _pressHoldTimer = Timer.periodic(const Duration(milliseconds: 16), (t) {
+      if (!widget.scrollController.hasClients) return;
+      _pressHoldSpeed = (_pressHoldSpeed + 0.4).clamp(6.0, 40.0);
+      final delta = scrollDown ? _pressHoldSpeed : -_pressHoldSpeed;
+      final newOffset = (widget.scrollController.offset + delta).clamp(
+        0.0,
+        widget.scrollController.position.maxScrollExtent,
+      );
+      widget.scrollController.jumpTo(newOffset);
+    });
+  }
+
+  void _stopPressHold() {
+    _pressHoldTimer?.cancel();
+    _pressHoldTimer = null;
+    _pressHoldSpeed = 0.0;
   }
 
   @override
@@ -5287,11 +5536,21 @@ class _MessageScrubberState extends State<_MessageScrubber> {
     final int lastTurnGlobalIndex = turnIndices.last;
     final int effectiveActiveGlobalIndex = _activeIndex ?? lastTurnGlobalIndex;
 
-    // Sliding window: show at most _maxVisibleDashes dashes, centered
-    // around whichever turn is currently active, so a conversation with
-    // more than 8 chats moves the window instead of stretching all
-    // dashes across the full strip height.
+    // Shrink-as-it-grows sizing: as more turns accumulate, both the dash
+    // thickness and the gap between dashes scale down slightly (within a
+    // reasonable floor) so a long-running chat's scrubber stays compact
+    // instead of the dashes/gaps staying at a fixed large size forever.
     final int total = turnIndices.length;
+    final double growthFactor =
+        total <= _maxVisibleDashes
+            ? 1.0
+            : (1.0 - ((total - _maxVisibleDashes) / 200.0)).clamp(0.55, 1.0);
+    final double dashBarThickness = (4 * growthFactor).clamp(2.5, 4.0);
+    final double dashVisualGap = (_dashVisualGapBase * growthFactor).clamp(
+      7.0,
+      _dashVisualGapBase,
+    );
+
     final int visibleCount =
         total < _maxVisibleDashes ? total : _maxVisibleDashes;
 
@@ -5309,19 +5568,25 @@ class _MessageScrubberState extends State<_MessageScrubber> {
 
     final windowIndices = turnIndices.sublist(start, end);
 
-    // Compact, tightly-packed block instead of one stretched across the
-    // whole strip: fixed bar thickness plus a small fixed gap, centered
-    // vertically in the available space.
-    const double pitch = _dashBarThickness + _dashVisualGap;
+    final double pitch = dashBarThickness + dashVisualGap;
     final double totalBlockHeight =
         windowIndices.isEmpty
             ? 0
-            : (windowIndices.length - 1) * pitch + _dashBarThickness;
+            : (windowIndices.length - 1) * pitch + dashBarThickness;
 
     double blockTop = (availableHeight - totalBlockHeight) / 2;
     if (blockTop < 0) blockTop = 0;
 
-    const double outerWidth = _dashColumnWidth + _cardGap + _cardWidth;
+    // The popup card's height is capped to exactly the dash column's own
+    // block height (plus a little breathing room), so it never grows
+    // longer than the strip of dashes itself - it reads as "the dashes,
+    // expanded into readable rows" rather than an oversized separate
+    // panel with its own scroll region covering the whole chat height.
+    final double cardHeight = (totalBlockHeight + 24).clamp(
+      60.0,
+      availableHeight,
+    );
+    final double cardWidth = 210;
 
     return Positioned(
       right: 6,
@@ -5331,16 +5596,31 @@ class _MessageScrubberState extends State<_MessageScrubber> {
         onEnter: (_) => _openCard(),
         onExit: (_) => _scheduleClose(),
         child: SizedBox(
-          // Wide enough to contain BOTH the dash column and the hover
-          // card, so this single MouseRegion's hit-test area covers the
-          // whole hover path between them — this is what stops the card
-          // from disappearing while the cursor is moving from a dash
-          // toward it.
-          width: outerWidth,
+          width: cardWidth + _cardGap + _dashColumnWidth,
           height: availableHeight,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
+              // Small circular progress indicator directly above the
+              // dash column, showing overall scroll progress through the
+              // conversation.
+              Positioned(
+                top: blockTop - 26,
+                right: (_dashColumnWidth - 18) / 2,
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    value: _scrollProgress,
+                    strokeWidth: 2,
+                    backgroundColor: Colors.grey.shade800,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.orange,
+                    ),
+                  ),
+                ),
+              ),
+
               ...windowIndices.asMap().entries.map((entry) {
                 final position = entry.key;
                 final globalIndex = entry.value;
@@ -5354,18 +5634,25 @@ class _MessageScrubberState extends State<_MessageScrubber> {
                   width: _dashColumnWidth,
                   child: GestureDetector(
                     onTap: () => _jumpTo(globalIndex),
+                    onLongPressStart: (_) {
+                      final isBelowActive =
+                          globalIndex > effectiveActiveGlobalIndex;
+                      _startPressHold(isBelowActive);
+                    },
+                    onLongPressEnd: (_) => _stopPressHold(),
+                    onLongPressCancel: () => _stopPressHold(),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: Container(
                         alignment: Alignment.centerRight,
                         padding: const EdgeInsets.symmetric(
-                          vertical: 3,
+                          vertical: 5,
                           horizontal: 4,
                         ),
                         color: Colors.transparent,
                         child: Container(
                           width: isActive ? 20 : 14,
-                          height: _dashBarThickness,
+                          height: dashBarThickness,
                           decoration: BoxDecoration(
                             color:
                                 isActive
@@ -5391,7 +5678,7 @@ class _MessageScrubberState extends State<_MessageScrubber> {
 
               Positioned(
                 right: _dashColumnWidth + _cardGap,
-                top: 0,
+                top: blockTop - 4,
                 child: IgnorePointer(
                   ignoring: !_showCard,
                   child: AnimatedOpacity(
@@ -5402,10 +5689,11 @@ class _MessageScrubberState extends State<_MessageScrubber> {
                       onEnter: (_) => _openCard(),
                       onExit: (_) => _scheduleClose(),
                       child: Container(
-                        width: _cardWidth,
-                        constraints: BoxConstraints(
-                          maxHeight: availableHeight.clamp(120.0, 420.0),
-                        ),
+                        width: cardWidth,
+                        // Capped to the dash column's own height so the
+                        // popup scales WITH the dashes instead of always
+                        // spanning the full available strip height.
+                        height: cardHeight,
                         decoration: BoxDecoration(
                           color: const Color(0xFF1A1A1A),
                           borderRadius: BorderRadius.circular(10),
@@ -5421,9 +5709,9 @@ class _MessageScrubberState extends State<_MessageScrubber> {
                         padding: const EdgeInsets.symmetric(vertical: 6),
                         child: ListView.builder(
                           shrinkWrap: true,
-                          itemCount: turnIndices.length,
+                          itemCount: windowIndices.length,
                           itemBuilder: (context, i) {
-                            final globalIndex = turnIndices[i];
+                            final globalIndex = windowIndices[i];
                             final isActive =
                                 globalIndex == effectiveActiveGlobalIndex;
                             final preview = _shortPreview(
