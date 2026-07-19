@@ -519,11 +519,108 @@ class _AIScreenState extends State<AIScreen>
     );
   }
 
+  String _getConversationPreview(String conversationId) {
+    final messages =
+        _chatBox.values
+            .where((m) => m.conversationId == conversationId)
+            .toList()
+          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final firstUserMessage =
+        messages.where((m) => m.isUser).isNotEmpty
+            ? messages.firstWhere((m) => m.isUser)
+            : null;
+    final text = firstUserMessage?.text.trim() ?? 'Untitled chat';
+    if (text.length <= 80) return text;
+    return '${text.substring(0, 80)}...';
+  }
+
+  Future<void> _deleteConversation(String conversationId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Delete Conversation'),
+            content: const Text(
+              'Are you sure you want to delete this conversation? This cannot be undone.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final messagesToDelete =
+          _chatBox.values
+              .where((msg) => msg.conversationId == conversationId)
+              .toList();
+
+      for (final msg in messagesToDelete) {
+        await msg.delete();
+      }
+
+      final conversationsToDelete =
+          _conversationBox.values
+              .where((conv) => conv.id == conversationId)
+              .toList();
+
+      for (final conv in conversationsToDelete) {
+        await conv.delete();
+      }
+
+      if (_activeConversationId == conversationId) {
+        setState(() {
+          _messages.clear();
+          _activeConversationId = null;
+          _currentStreamText = '';
+          _currentThinkingProcess = '';
+          _isThinkingComplete = false;
+          _isThinkingPhase = false;
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Conversation deleted'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Error deleting conversation: $e');
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to delete conversation'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _loadChatHistoryForModel(String modelId) async {
     if (!_enableHistory) return;
 
     try {
-      final conversations =
+      final allConversations =
           _conversationBox.values
               .where((conv) => conv.modelUsed == modelId)
               .toList()
@@ -531,6 +628,23 @@ class _AIScreenState extends State<AIScreen>
               (a, b) =>
                   b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
             );
+
+      // Remove duplicate conversations with same title (keep oldest)
+      final uniqueConversations = <String, ConversationHive>{};
+      for (final conv in allConversations) {
+        final preview = _getConversationPreview(conv.id);
+        if (!uniqueConversations.containsKey(preview)) {
+          uniqueConversations[preview] = conv;
+        } else {
+          // Delete the duplicate conversation and its messages
+          await _deleteConversation(conv.id);
+        }
+      }
+
+      final conversations =
+          uniqueConversations.values.toList()..sort(
+            (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
+          );
 
       if (conversations.isNotEmpty) {
         final latestConversation = conversations.first;
@@ -744,11 +858,6 @@ Current Year: $currentYear''';
       ],
     });
 
-    // Always send the current message together with prior turns from
-    // this same conversation, capped at _maxContextMessages (user
-    // configurable, default 10). This is what lets the model answer
-    // "what did I just say" correctly instead of claiming it has no
-    // memory - previously only the current prompt was ever sent.
     if (_messages.isNotEmpty) {
       final chatMessages =
           _messages
@@ -764,8 +873,6 @@ Current Year: $currentYear''';
       if (chatMessages.length <= _maxContextMessages) {
         contextMessages = chatMessages;
       } else {
-        // Keep the earliest 2 turns (sets topic/intent) plus the most
-        // recent (_maxContextMessages - 2) turns.
         contextMessages = [
           ...chatMessages.take(2),
           ...chatMessages.skip(chatMessages.length - (_maxContextMessages - 2)),
@@ -819,11 +926,6 @@ Current Year: $currentYear''';
     String prompt, {
     List<Uint8List>? images,
   }) async* {
-    // When streaming is turned off in Settings, we still call the
-    // streaming endpoint (both web proxy and direct API support SSE)
-    // but buffer every chunk locally and only yield once at the very
-    // end. This gives a single non-streamed pop-in response instead of
-    // watching text build up, matching what "Streaming: off" should do.
     final bool streamMode = _enableStreaming;
 
     final String url =
@@ -947,8 +1049,6 @@ Current Year: $currentYear''';
     }
 
     if (!streamMode) {
-      // Non-streaming mode: emit everything as one final chunk so the UI
-      // pops in the complete answer at once, exactly like the request.
       yield fullBufferedText;
     }
   }
@@ -999,9 +1099,6 @@ Current Year: $currentYear''';
     );
   }
 
-  // Retries with growing backoff (1s, 2s, 4s, 8s, 16s) before finally
-  // showing the error bubble, so a flaky/slow connection gets several
-  // automatic chances to recover instead of failing on the first hiccup.
   Future<void> _sendWithBackoffRetry(
     String prompt, {
     List<Uint8List>? images,
@@ -1076,12 +1173,6 @@ Current Year: $currentYear''';
         onDone: () async {
           if (!mounted) return;
 
-          // Guard against duplicated text: if the model ignored the
-          // instruction and re-sent part/all of the original incomplete
-          // response at the start of its continuation, strip that
-          // overlap before stitching the two halves together. This is
-          // what previously caused "Continue" to show duplicate
-          // sentences or duplicate code blocks.
           String continuation = accumulatedResponse;
           final overlapLen = _findOverlapLength(
             incompleteSnapshot,
@@ -1126,11 +1217,6 @@ Current Year: $currentYear''';
     }
   }
 
-  // Finds how many leading characters of `continuation` duplicate the
-  // trailing characters of `original`, so that overlap can be trimmed
-  // before the two are joined. Checks progressively shorter suffixes of
-  // `original` (capped for performance) against the start of
-  // `continuation` and returns the longest match found.
   int _findOverlapLength(String original, String continuation) {
     final int maxCheck = original.length < 400 ? original.length : 400;
     for (int len = maxCheck; len > 0; len--) {
@@ -1185,18 +1271,54 @@ Current Year: $currentYear''';
 
   String _thinkingPhaseLabel(String thinkingTextSoFar) {
     final length = thinkingTextSoFar.trim().length;
-    if (length == 0) return 'Reading your question';
-    if (length < 80) return 'Understanding context';
-    if (length < 220) return 'Working through the reasoning';
-    if (length < 420) return 'Checking details';
-    return 'Finalizing the answer';
+
+    if (length == 0) {
+      return '🧠 Thinking...';
+    } else if (length < 40) {
+      return '🔍 Sleuthing through the data...';
+    } else if (length < 80) {
+      return '🧠 Cogitating on your question...';
+    } else if (length < 120) {
+      return '🔎 Figuring out the best response...';
+    } else if (length < 160) {
+      return '📊 Analyzing the context...';
+    } else if (length < 200) {
+      return '🤔 Contemplating the nuances...';
+    } else if (length < 240) {
+      return '🧩 Piecing together the answer...';
+    } else if (length < 280) {
+      return '📝 Formulating a response...';
+    } else if (length < 320) {
+      return '🔬 Examining the details...';
+    } else if (length < 360) {
+      return '🧠 Processing your request...';
+    } else if (length < 400) {
+      return '⚡ Running the reasoning...';
+    } else if (length < 440) {
+      return '🌀 Fathoming the deeper meaning...';
+    } else if (length < 480) {
+      return '🤔 Musing over the possibilities...';
+    } else if (length < 520) {
+      return '📐 Triangulating the best approach...';
+    } else if (length < 560) {
+      return '⚡ Honing the response...';
+    } else if (length < 600) {
+      return '🎯 Mulling over the final details...';
+    } else if (length < 640) {
+      return '🖼️ Picturing the complete answer...';
+    } else if (length < 680) {
+      return '🔀 Untangling the complexity...';
+    } else if (length < 720) {
+      return '🔍 Sifting through the reasoning...';
+    } else if (length < 760) {
+      return '📊 Reckoning with the evidence...';
+    } else if (length < 800) {
+      return '💡 Connecting the final dots...';
+    } else {
+      return '✨ Finalizing the answer...';
+    }
   }
 
-  // Centralized conversation resolution used by _saveConversation so the
-  // same conversation row is reused for the lifetime of a chat (fixes
-  // duplicate-conversation creation) while a distinct new chat (started
-  // via "New Chat") always gets its own fresh id and never collides with
-  // an existing one.
   Future<ConversationHive> _resolveCurrentConversation() async {
     if (_forceNewConversation || _activeConversationId == null) {
       final conversationId =
@@ -1214,7 +1336,6 @@ Current Year: $currentYear''';
       return conversation;
     }
 
-    // Reuse the existing conversation this screen is already attached to.
     final existing = _conversationBox.values.firstWhere(
       (c) => c.id == _activeConversationId,
       orElse:
@@ -1480,22 +1601,13 @@ Current Year: $currentYear''';
             }
           });
 
-          // Auto-scroll only follows new content when the user hasn't
-          // deliberately scrolled up. Because _userScrolledUp gates
-          // _scheduleAutoScroll internally, scrolling up mid-stream is
-          // respected: the reply keeps streaming in the background, the
-          // viewport just stops being force-jumped to the bottom, exactly
-          // like other AI chat apps.
           _scheduleAutoScroll();
         },
         onError: (error) async {
           if (!mounted) return;
 
-          // Automatic retry with growing backoff before giving up, so a
-          // flaky or momentarily-down connection gets several chances to
-          // recover instead of immediately showing an error bubble.
           if (_retryCount < _maxRetries) {
-            final backoffSeconds = 1 << _retryCount; // 1,2,4,8,16
+            final backoffSeconds = 1 << _retryCount;
             _retryCount++;
             await Future.delayed(Duration(seconds: backoffSeconds));
             if (!mounted) return;
@@ -1667,12 +1779,6 @@ Current Year: $currentYear''';
     });
   }
 
-  // Smoothly animates all the way to the bottom instead of jumping. The
-  // old version used a single jumpTo call, which on a long/scaled chat
-  // could land mid-list because maxScrollExtent hadn't been recalculated
-  // yet for content still being laid out - hence "have to press again".
-  // This retries the jump across a couple of frames so it reliably lands
-  // exactly at the bottom even while the list is still growing.
   void _scrollToBottom() {
     if (!_scrollController.hasClients) return;
 
@@ -1687,8 +1793,6 @@ Current Year: $currentYear''';
     }
 
     jumpOnce();
-    // Re-issue a couple of times shortly after in case maxScrollExtent
-    // grows (streaming content, images loading, or newly built rows).
     Future.delayed(const Duration(milliseconds: 150), jumpOnce);
     Future.delayed(const Duration(milliseconds: 350), jumpOnce);
 
@@ -1830,7 +1934,7 @@ Current Year: $currentYear''';
   }
 
   Widget _buildChatHistoryScreen() {
-    final conversationsForModel =
+    final allConversations =
         _conversationBox.values
             .where((c) => c.modelUsed == _selectedModel)
             .toList()
@@ -1838,20 +1942,22 @@ Current Year: $currentYear''';
             (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
           );
 
-    String conversationPreview(String conversationId) {
-      final messages =
-          _chatBox.values
-              .where((m) => m.conversationId == conversationId)
-              .toList()
-            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      final firstUserMessage =
-          messages.where((m) => m.isUser).isNotEmpty
-              ? messages.firstWhere((m) => m.isUser)
-              : null;
-      final text = firstUserMessage?.text.trim() ?? 'Untitled chat';
-      if (text.length <= 80) return text;
-      return '${text.substring(0, 80)}...';
+    // Remove duplicates with same title (keep oldest)
+    final uniqueConversations = <String, ConversationHive>{};
+    for (final conv in allConversations) {
+      final preview = _getConversationPreview(conv.id);
+      if (!uniqueConversations.containsKey(preview)) {
+        uniqueConversations[preview] = conv;
+      } else {
+        // Delete the duplicate conversation and its messages
+        _deleteConversation(conv.id);
+      }
     }
+
+    final conversations =
+        uniqueConversations.values.toList()..sort(
+          (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
+        );
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -1866,7 +1972,7 @@ Current Year: $currentYear''';
         title: const Text('Chat History'),
       ),
       body:
-          conversationsForModel.isEmpty
+          conversations.isEmpty
               ? Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -1888,10 +1994,10 @@ Current Year: $currentYear''';
                   horizontal: 12,
                   vertical: 8,
                 ),
-                itemCount: conversationsForModel.length,
+                itemCount: conversations.length,
                 itemBuilder: (context, index) {
-                  final conversation = conversationsForModel[index];
-                  final preview = conversationPreview(conversation.id);
+                  final conversation = conversations[index];
+                  final preview = _getConversationPreview(conversation.id);
 
                   return Card(
                     color: Colors.grey.shade900,
@@ -1932,10 +2038,24 @@ Current Year: $currentYear''';
                           ),
                         ),
                       ),
-                      trailing: const Icon(
-                        Icons.arrow_forward_ios,
-                        color: Colors.white38,
-                        size: 14,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.redAccent,
+                              size: 18,
+                            ),
+                            onPressed:
+                                () => _deleteConversation(conversation.id),
+                          ),
+                          const Icon(
+                            Icons.arrow_forward_ios,
+                            color: Colors.white38,
+                            size: 14,
+                          ),
+                        ],
                       ),
                       onTap: () async {
                         Navigator.of(context).pop();
@@ -4131,7 +4251,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
 }
 
 class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
-  bool _isThinkingExpanded = false;
+  bool _isThinkingExpanded = false; // Initially collapsed
 
   String _formatThinkingTime(Duration duration) {
     if (duration.inSeconds < 1) {
@@ -4560,9 +4680,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  // Retry is now a distinct blue/teal color scheme instead of red, so it
-  // is visually distinguishable from the red error message text and the
-  // red-styled error state it sits below.
   Widget _buildRetryButton() {
     return Container(
       margin: const EdgeInsets.only(top: 12),
