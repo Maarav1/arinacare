@@ -160,7 +160,7 @@ dependencies:
 
   # ===== SDK PROVIDED (DO NOT DECLARE) =====
   # async, fake_async, js, leak_tracker_*, material_color_utilities,
-  # vector_math, vm_service, web are all provided by Flutter SDK
+  # vector_math, vm_service,  are all provided by Flutter SDK
 
 dev_dependencies:
   flutter_test:
@@ -206,7 +206,7 @@ flutter:
     - assets/images/no_online.png
     - assets/images/arina1.png
     - assets/images/google_logo.png
-   # - .env
+    #- .env 
     - assets/ai_thinking.json
     - assets/ai_welcome.json
 
