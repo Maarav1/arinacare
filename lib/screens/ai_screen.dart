@@ -174,6 +174,7 @@ class _AIScreenState extends State<AIScreen>
   Timer? _scrollButtonTimer;
   bool _showScrollButton = false;
   bool _userScrolledUp = false;
+  bool _isRetryCancelled = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -1099,6 +1100,26 @@ Current Year: $currentYear''';
     );
   }
 
+    void _cancelRetry() {
+    _isRetryCancelled = true;
+    _cancelCurrentStream();
+    if (mounted) {
+      setState(() {
+        _isSendingMessage = false;
+        _isStreaming = false;
+        _currentStreamText = '';
+        _messages.add(
+          ChatMessage(
+            text: '⚠️ Cancelled. Please try again.',
+            isUser: false,
+            timestamp: DateTime.now(),
+            isError: true,
+          ),
+        );
+      });
+    }
+  }
+
   Future<void> _sendWithBackoffRetry(
     String prompt, {
     List<Uint8List>? images,
@@ -1603,52 +1624,79 @@ Current Year: $currentYear''';
 
           _scheduleAutoScroll();
         },
-        onError: (error) async {
+                onError: (error) async {
           if (!mounted) return;
 
-          if (_retryCount < _maxRetries) {
-            final backoffSeconds = 1 << _retryCount;
-            _retryCount++;
-            await Future.delayed(Duration(seconds: backoffSeconds));
-            if (!mounted) return;
-            await _sendWithBackoffRetry(prompt, images: images, isRetry: true);
+          // Check if user cancelled
+          if (_isRetryCancelled) {
+            setState(() {
+              _resetMessageState();
+              _isRetryCancelled = false;
+            });
             return;
           }
 
-          final partialText = _partialResponseOnError;
-          final hasPartial = _hasPartialResponse && partialText.isNotEmpty;
-
+          // Show the error to the user immediately
+          final errorMessage = error.toString();
           setState(() {
-            if (hasPartial) {
-              _messages.add(
-                ChatMessage(
-                  text: partialText,
-                  isUser: false,
-                  timestamp: DateTime.now(),
-                  isIncomplete: true,
-                  thinkingProcess:
-                      _currentThinkingProcess.isNotEmpty
-                          ? _currentThinkingProcess
-                          : null,
-                  thinkingTime:
-                      _currentThinkingProcess.isNotEmpty
-                          ? _thinkingStopwatch.elapsed
-                          : null,
-                ),
-              );
-            }
-
             _messages.add(
               ChatMessage(
-                text: 'Network error after several attempts. Tap Retry below.',
+                text: '❌ Error: $errorMessage\n\nTap Retry to try again.',
                 isUser: false,
                 timestamp: DateTime.now(),
                 isError: true,
                 canRetry: true,
               ),
             );
-            _resetMessageState();
+            _isStreaming = false;
           });
+
+          // Auto-retry only if user hasn't cancelled and we're under max retries
+          if (_retryCount < _maxRetries && !_isRetryCancelled) {
+            final backoffSeconds = 1 << _retryCount; // 1,2,4,8,16
+            _retryCount++;
+
+            // Show retry countdown
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Retrying in $backoffSeconds seconds... (Attempt $_retryCount/$_maxRetries)',
+                  ),
+                  backgroundColor: Colors.orange,
+                  duration: Duration(seconds: backoffSeconds),
+                ),
+              );
+            }
+
+            await Future.delayed(Duration(seconds: backoffSeconds));
+            if (mounted && !_isRetryCancelled) {
+              // Remove the error message before retrying
+              setState(() {
+                _messages.removeWhere((msg) => msg.isError && msg.canRetry);
+              });
+              await _sendWithBackoffRetry(
+                prompt,
+                images: images,
+                isRetry: true,
+              );
+            }
+          } else if (_retryCount >= _maxRetries) {
+            // Show final error with Retry option
+            setState(() {
+              _messages.add(
+                ChatMessage(
+                  text:
+                      '❌ Max retries reached. Please check your internet connection and try again.',
+                  isUser: false,
+                  timestamp: DateTime.now(),
+                  isError: true,
+                  canRetry: true,
+                ),
+              );
+              _resetMessageState();
+            });
+          }
         },
         onDone: () async {
           if (!mounted) return;
@@ -3809,6 +3857,8 @@ Current Year: $currentYear''';
                                         _messages[index].canRetry
                                             ? _retryFailedRequest
                                             : null,
+                                    onCancelPressed:
+                                        _cancelRetry, // ADD THIS LINE
                                   );
                                 } else {
                                   if (_isThinkingPhase && _enableThinking) {
@@ -3914,6 +3964,8 @@ Current Year: $currentYear''';
                                       enableAutoScroll: _enableAutoScroll,
                                       onContinuePressed: null,
                                       onRetryPressed: null,
+                                      onCancelPressed:
+                                          _cancelRetry, // ADD THIS LINE
                                     );
                                   }
                                 }
@@ -4237,6 +4289,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
   final bool enableAutoScroll;
   final VoidCallback? onContinuePressed;
   final VoidCallback? onRetryPressed;
+  final VoidCallback? onCancelPressed; // ADD THIS LINE
 
   const ChatBubbleWithThinking({
     super.key,
@@ -4244,6 +4297,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
     this.enableAutoScroll = false,
     this.onContinuePressed,
     this.onRetryPressed,
+    this.onCancelPressed, // ADD THIS LINE
   });
 
   @override
@@ -4601,7 +4655,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  Widget _buildMessageContent(ChatMessage message) {
+    Widget _buildMessageContent(ChatMessage message) {
     if (message.isLoading) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -4634,13 +4688,55 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ],
       );
     } else if (message.isError) {
-      return Text(
-        message.text,
-        style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+      // Show error with Cancel button
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message.text,
+            style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+          ),
+          if (message.canRetry) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _buildRetryButton(),
+                const SizedBox(width: 8),
+                _buildCancelButton(),
+              ],
+            ),
+          ],
+        ],
       );
     } else {
       return _buildParsedText(message.text);
     }
+  }
+
+    Widget _buildCancelButton() {
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      child: ElevatedButton(
+        onPressed: widget.onCancelPressed, // USE THE CALLBACK
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.red.withAlpha(30),
+          foregroundColor: Colors.redAccent,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: Colors.redAccent.withAlpha(100), width: 1),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cancel, size: 16),
+            SizedBox(width: 8),
+            Text('Cancel'),
+          ],
+        ),
+      ),
+    );
   }
 
   void _copyFullMessage() {
@@ -4706,8 +4802,12 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  Widget _buildActionButtons() {
-    if (widget.message.isUser || widget.message.isLoading) {
+    Widget _buildActionButtons() {
+    // Don't show buttons if message is empty, loading, or error
+    if (widget.message.isUser ||
+        widget.message.isLoading ||
+        widget.message.text.isEmpty ||
+        widget.message.isError) {
       return const SizedBox.shrink();
     }
 
