@@ -1054,7 +1054,10 @@ Current Year: $currentYear''';
     }
   }
 
-  Future<void> _retryFailedRequest() async {
+    Future<void> _retryFailedRequest() async {
+    // Reset cancellation flag when user manually retries
+    _isRetryCancelled = false;
+
     if (_lastFailedPrompt == null) {
       final lastUser = _messages.lastWhere(
         (m) => m.isUser,
@@ -1100,7 +1103,7 @@ Current Year: $currentYear''';
     );
   }
 
-    void _cancelRetry() {
+  void _cancelRetry() {
     _isRetryCancelled = true;
     _cancelCurrentStream();
     if (mounted) {
@@ -1120,13 +1123,6 @@ Current Year: $currentYear''';
     }
   }
 
-  Future<void> _sendWithBackoffRetry(
-    String prompt, {
-    List<Uint8List>? images,
-    required bool isRetry,
-  }) async {
-    await _sendGeminiMessageInternal(prompt, images: images, isRetry: isRetry);
-  }
 
   Future<void> _continueIncompleteResponse() async {
     if (_lastIncompleteResponse.isEmpty) {
@@ -1624,7 +1620,7 @@ Current Year: $currentYear''';
 
           _scheduleAutoScroll();
         },
-                onError: (error) async {
+               onError: (error) async {
           if (!mounted) return;
 
           // Check if user cancelled
@@ -1636,64 +1632,54 @@ Current Year: $currentYear''';
             return;
           }
 
-          // Show the error to the user immediately
-          final errorMessage = error.toString();
-          setState(() {
-            _messages.add(
-              ChatMessage(
-                text: '❌ Error: $errorMessage\n\nTap Retry to try again.',
-                isUser: false,
-                timestamp: DateTime.now(),
-                isError: true,
-                canRetry: true,
-              ),
-            );
-            _isStreaming = false;
-          });
+                    final errorMessage = error.toString();
 
-          // Auto-retry only if user hasn't cancelled and we're under max retries
-          if (_retryCount < _maxRetries && !_isRetryCancelled) {
-            final backoffSeconds = 1 << _retryCount; // 1,2,4,8,16
-            _retryCount++;
+          // Check if this is a quota/resource exhausted error
+          final isQuotaError =
+              errorMessage.contains('RESOURCE_EXHAUSTED') ||
+              errorMessage.contains('quota') ||
+              errorMessage.contains('rate limit') ||
+              errorMessage.contains('429') ||
+              errorMessage.contains('RESOURCE_EXHAUSTED');
 
-            // Show retry countdown
+          if (isQuotaError) {
+            // QUOTA ERROR - Show error and DO NOT auto-retry
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'Retrying in $backoffSeconds seconds... (Attempt $_retryCount/$_maxRetries)',
-                  ),
-                  backgroundColor: Colors.orange,
-                  duration: Duration(seconds: backoffSeconds),
-                ),
-              );
-            }
-
-            await Future.delayed(Duration(seconds: backoffSeconds));
-            if (mounted && !_isRetryCancelled) {
-              // Remove the error message before retrying
               setState(() {
-                _messages.removeWhere((msg) => msg.isError && msg.canRetry);
+                _messages.add(
+                  ChatMessage(
+                    text:
+                        '⚠️ API Quota Exceeded\n\n$errorMessage\n\nPlease wait a moment and try again manually.',
+                    isUser: false,
+                    timestamp: DateTime.now(),
+                    isError: true,
+                    canRetry: true,
+                  ),
+                );
+                _isStreaming = false;
+                _isSendingMessage = false;
+                _resetMessageState();
               });
-              await _sendWithBackoffRetry(
-                prompt,
-                images: images,
-                isRetry: true,
-              );
             }
-          } else if (_retryCount >= _maxRetries) {
-            // Show final error with Retry option
+            return; // Stop here - no auto-retry
+          }
+
+          // For network errors, show error and allow user to retry manually
+          // Do NOT auto-retry - let the user decide
+          if (mounted) {
             setState(() {
               _messages.add(
                 ChatMessage(
                   text:
-                      '❌ Max retries reached. Please check your internet connection and try again.',
+                      '❌ Error: $errorMessage\n\nTap Retry to try again manually.',
                   isUser: false,
                   timestamp: DateTime.now(),
                   isError: true,
                   canRetry: true,
                 ),
               );
+              _isStreaming = false;
+              _isSendingMessage = false;
               _resetMessageState();
             });
           }
@@ -4688,12 +4674,16 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ],
       );
     } else if (message.isError) {
-      // Show error with Cancel button
+      // Make sure error text is always shown
+      final displayText =
+          message.text.isEmpty
+              ? '⚠️ An error occurred. Tap Retry to try again.'
+              : message.text;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            message.text,
+            displayText,
             style: const TextStyle(color: Colors.redAccent, fontSize: 14),
           ),
           if (message.canRetry) ...[
@@ -4708,12 +4698,17 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
           ],
         ],
       );
+    } else if (message.text.isEmpty && !message.isLoading) {
+      return const Text(
+        '⚠️ Empty response received. Please try again.',
+        style: TextStyle(color: Colors.orange, fontSize: 14),
+      );
     } else {
       return _buildParsedText(message.text);
     }
   }
 
-    Widget _buildCancelButton() {
+  Widget _buildCancelButton() {
     return Container(
       margin: const EdgeInsets.only(top: 4),
       child: ElevatedButton(
@@ -4803,7 +4798,11 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   }
 
     Widget _buildActionButtons() {
-    // Don't show buttons if message is empty, loading, or error
+    // Don't show buttons if:
+    // - Message is from user
+    // - Message is loading
+    // - Message text is empty
+    // - Message is an error
     if (widget.message.isUser ||
         widget.message.isLoading ||
         widget.message.text.isEmpty ||
