@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-//import 'package:webview_flutter_web/webview_flutter_web.dart';  dont remove this is used wen on web
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+
+//import 'package:webview_flutter_web/webview_flutter_web.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/services.dart';
@@ -23,23 +25,22 @@ class AIScreen extends StatefulWidget {
 }
 
 class _AIScreenState extends State<AIScreen>
-    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
+    with AutomaticKeepAliveClientMixin {
   late final WebViewController _controller;
   bool _isLoading = false;
   bool _showPlatformSelection = true;
   bool _usingGeminiAPI = false;
   FocusNode? _inputFocusNode;
 
-  BannerAd? _bannerAd;
+  late BannerAd _bannerAd;
   InterstitialAd? _interstitialAd;
   bool _isBannerAdLoaded = false;
   bool _isInterstitialAdLoaded = false;
   Timer? _interstitialTimer;
 
-  // Hive boxes - initialized after Hive is ready
-  Box<ChatMessageHive>? _chatBox;
-  Box<ConversationHive>? _conversationBox;
-  Box<UserProfileHive>? _userProfileBox;
+  late Box<ChatMessageHive> _chatBox;
+  late Box<ConversationHive> _conversationBox;
+  late Box<UserProfileHive> _userProfileBox;
 
   String _geminiApiKey = '';
   final TextEditingController _messageController = TextEditingController();
@@ -175,45 +176,16 @@ class _AIScreenState extends State<AIScreen>
   bool _userScrolledUp = false;
   bool _isRetryCancelled = false;
 
-  // Loading state for Hive initialization
-  bool _isHiveLoading = true;
-
-  // ValueNotifier for send button state to avoid full rebuilds
-  final ValueNotifier<bool> _hasTextOrImages = ValueNotifier<bool>(false);
-  final ValueNotifier<bool> _isSendingNotifier = ValueNotifier<bool>(false);
-
-  // Stream controller for message updates - only rebuilds affected widgets
-  final StreamController<List<ChatMessage>> _messageStreamController =
-      StreamController.broadcast();
-  List<ChatMessage> _currentMessages = [];
-
   @override
   bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _initializeHiveAndApp();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.paused) {
-      // Save conversation when app goes to background
-      _saveConversation();
-    } else if (state == AppLifecycleState.detached) {
-      _cleanupResourcesSync();
-    }
-  }
-
-  Future<void> _initializeHiveAndApp() async {
-    await _initializeHive();
+    _initializeHive();
     _initializeApiKey();
     _initializeWebView();
     _initializeFocusNode();
-    _setupListeners();
 
     if (!kIsWeb) {
       MobileAds.instance.initialize();
@@ -224,24 +196,14 @@ class _AIScreenState extends State<AIScreen>
 
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
-
-    setState(() {
-      _isHiveLoading = false;
-    });
+    _messageController.addListener(_onMessageTextChanged);
   }
 
-  void _setupListeners() {
-    _messageController.addListener(_updateSendButtonState);
-    _hasTextOrImages.value =
-        _messageController.text.trim().isNotEmpty || _selectedImages.isNotEmpty;
+  void _onMessageTextChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
-
-  void _updateSendButtonState() {
-    final hasText = _messageController.text.trim().isNotEmpty;
-    final hasImages = _selectedImages.isNotEmpty;
-    _hasTextOrImages.value = hasText || hasImages;
-  }
-
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
@@ -289,87 +251,72 @@ class _AIScreenState extends State<AIScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _cleanupResourcesSync();
+    _cleanupResources();
     super.dispose();
   }
 
-  void _cleanupResourcesSync() {
-    // Cancel all timers synchronously
-    _interstitialTimer?.cancel();
-    _interstitialTimer = null;
+  Future<void> _cleanupResources() async {
+    await _cancelCurrentStream();
+    _streamSubscription?.cancel();
+    _streamSubscription = null;
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = null;
-
-    // Cancel stream subscription synchronously
-    _streamSubscription?.cancel();
-    _streamSubscription = null;
-
-    // Dispose controllers
     _scrollController.removeListener(_onScroll);
-    _messageController.removeListener(_updateSendButtonState);
+    _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     _nameController.dispose();
     _interestsController.dispose();
     _inputFocusNode?.dispose();
     _scrollController.dispose();
-    _hasTextOrImages.dispose();
-    _isSendingNotifier.dispose();
-    _messageStreamController.close();
 
-    // Dispose ads
     if (!kIsWeb) {
-      _bannerAd?.dispose();
-      _bannerAd = null;
-      _interstitialAd?.dispose();
-      _interstitialAd = null;
+      _bannerAd.dispose();
+      _interstitialTimer?.cancel();
+      if (_interstitialAd != null) {
+        _interstitialAd!.dispose();
+      }
     }
 
-    // Fire-and-forget save, but don't await
-    _saveConversation();
+    await _saveConversation();
   }
 
   Future<void> _initializeHive() async {
-    try {
-      _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
-      _conversationBox = await Hive.openBox<ConversationHive>('conversations');
-      _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
-
-      await _loadUserProfile();
-      await _loadChatHistoryForModel(_selectedModel);
-      _cleanOldConversations();
-
-      setState(() {
-        // Remove this line: _hiveInitialized = true;
-        _isHiveLoading = false; // This is the correct flag
-      });
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error initializing Hive: $e');
-      }
-      setState(() {
-        _isHiveLoading = false; // Also set to false on error
-      });
+    if (!Hive.isAdapterRegistered(0)) {
+      Hive.registerAdapter(ChatMessageHiveAdapter());
     }
+    if (!Hive.isAdapterRegistered(1)) {
+      Hive.registerAdapter(ConversationHiveAdapter());
+    }
+    if (!Hive.isAdapterRegistered(2)) {
+      Hive.registerAdapter(UserProfileHiveAdapter());
+    }
+
+    await Hive.initFlutter();
+
+    _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
+    _conversationBox = await Hive.openBox<ConversationHive>('conversations');
+    _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
+
+    await _loadUserProfile();
+    await _loadChatHistoryForModel(_selectedModel);
+    _cleanOldConversations();
   }
 
-  Future<void> _cleanOldConversations() async {
+  void _cleanOldConversations() async {
     final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
 
     final oldConversations =
-        _conversationBox?.values
+        _conversationBox.values
             .where((conv) => conv.lastMessageTimestamp.isBefore(thirtyDaysAgo))
-            .toList() ??
-        [];
+            .toList();
 
     for (final conv in oldConversations) {
       final messagesToDelete =
-          _chatBox?.values
+          _chatBox.values
               .where((msg) => msg.conversationId == conv.id)
-              .toList() ??
-          [];
+              .toList();
 
       for (final msg in messagesToDelete) {
         await msg.delete();
@@ -379,7 +326,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
- void _initializeApiKey() {
+  void _initializeApiKey() {
     // Always use proxy mode for both web and mobile
     // The API key stays on the server, not in the client
     _geminiApiKey = 'proxy';
@@ -389,10 +336,7 @@ class _AIScreenState extends State<AIScreen>
       print('✅ Gemini API using proxy (secure)');
     }
   }
-
   void _loadBannerAd() {
-    if (kIsWeb) return;
-
     _bannerAd = BannerAd(
       size: AdSize.banner,
       adUnitId: 'ca-app-pub-1472609237394607/7118264698',
@@ -411,12 +355,10 @@ class _AIScreenState extends State<AIScreen>
       ),
       request: const AdRequest(),
     );
-    _bannerAd!.load();
+    _bannerAd.load();
   }
 
   void _loadInterstitialAd() {
-    if (kIsWeb) return;
-
     InterstitialAd.load(
       adUnitId: 'ca-app-pub-1472609237394607/5863485201',
       request: const AdRequest(),
@@ -452,8 +394,6 @@ class _AIScreenState extends State<AIScreen>
   }
 
   void _startInterstitialTimer() {
-    if (kIsWeb) return;
-
     _interstitialTimer?.cancel();
     _interstitialTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
       if (_isInterstitialAdLoaded && _interstitialAd != null) {
@@ -477,13 +417,17 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Widget _buildBannerAd() {
-    if (kIsWeb || _bannerAd == null || !_isBannerAdLoaded) {
+    if (kIsWeb) {
+      return const SizedBox.shrink();
+    }
+
+    if (!_isBannerAdLoaded) {
       return const SizedBox.shrink();
     }
     return Container(
       height: 50,
       margin: const EdgeInsets.only(bottom: 8),
-      child: AdWidget(ad: _bannerAd!),
+      child: AdWidget(ad: _bannerAd),
     );
   }
 
@@ -502,7 +446,6 @@ class _AIScreenState extends State<AIScreen>
         if (mounted) {
           setState(() {
             _selectedImages.add(bytes);
-            _updateSendButtonState();
           });
         }
       }
@@ -517,12 +460,11 @@ class _AIScreenState extends State<AIScreen>
     if (mounted) {
       setState(() {
         _selectedImages.removeAt(index);
-        _updateSendButtonState();
       });
     }
   }
 
-  Future<void> _changeModel(String newModel) async {
+  void _changeModel(String newModel) async {
     await _saveConversation();
     await _cancelCurrentStream();
 
@@ -531,7 +473,6 @@ class _AIScreenState extends State<AIScreen>
     setState(() {
       _selectedModel = newModel;
       _messages.clear();
-      _currentMessages.clear();
       _currentStreamText = '';
       _selectedImages.clear();
       _currentThinkingProcess = '';
@@ -544,7 +485,6 @@ class _AIScreenState extends State<AIScreen>
       _hasPartialResponse = false;
       _partialResponseOnError = '';
       _activeConversationId = null;
-      _updateSendButtonState();
     });
 
     await _loadChatHistoryForModel(newModel);
@@ -563,12 +503,10 @@ class _AIScreenState extends State<AIScreen>
 
   String _getConversationPreview(String conversationId) {
     final messages =
-        _chatBox?.values
+        _chatBox.values
             .where((m) => m.conversationId == conversationId)
-            .toList() ??
-        [];
-    if (messages.isEmpty) return 'Untitled chat';
-    messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+            .toList()
+          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final firstUserMessage =
         messages.where((m) => m.isUser).isNotEmpty
             ? messages.firstWhere((m) => m.isUser)
@@ -607,20 +545,18 @@ class _AIScreenState extends State<AIScreen>
 
     try {
       final messagesToDelete =
-          _chatBox?.values
+          _chatBox.values
               .where((msg) => msg.conversationId == conversationId)
-              .toList() ??
-          [];
+              .toList();
 
       for (final msg in messagesToDelete) {
         await msg.delete();
       }
 
       final conversationsToDelete =
-          _conversationBox?.values
+          _conversationBox.values
               .where((conv) => conv.id == conversationId)
-              .toList() ??
-          [];
+              .toList();
 
       for (final conv in conversationsToDelete) {
         await conv.delete();
@@ -629,7 +565,6 @@ class _AIScreenState extends State<AIScreen>
       if (_activeConversationId == conversationId) {
         setState(() {
           _messages.clear();
-          _currentMessages.clear();
           _activeConversationId = null;
           _currentStreamText = '';
           _currentThinkingProcess = '';
@@ -664,11 +599,11 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Future<void> _loadChatHistoryForModel(String modelId) async {
-    if (!_enableHistory || _chatBox == null || _conversationBox == null) return;
+    if (!_enableHistory) return;
 
     try {
       final allConversations =
-          _conversationBox!.values
+          _conversationBox.values
               .where((conv) => conv.modelUsed == modelId)
               .toList()
             ..sort(
@@ -683,6 +618,7 @@ class _AIScreenState extends State<AIScreen>
         if (!uniqueConversations.containsKey(preview)) {
           uniqueConversations[preview] = conv;
         } else {
+          // Delete the duplicate conversation and its messages
           await _deleteConversation(conv.id);
         }
       }
@@ -696,36 +632,32 @@ class _AIScreenState extends State<AIScreen>
         final latestConversation = conversations.first;
 
         final messages =
-            _chatBox!.values
+            _chatBox.values
                 .where((msg) => msg.conversationId == latestConversation.id)
                 .toList()
               ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
         if (mounted) {
-          final loadedMessages =
-              messages
-                  .map(
-                    (msg) => ChatMessage(
-                      text: msg.text,
-                      isUser: msg.isUser,
-                      timestamp: msg.timestamp,
-                      isLoading: false,
-                      isError: msg.isError,
-                      thinkingProcess: msg.thinkingProcess,
-                      thinkingTime:
-                          msg.thinkingTimeMs != null
-                              ? Duration(milliseconds: msg.thinkingTimeMs!)
-                              : null,
-                      images: msg.imageBytes,
-                      isIncomplete: msg.isIncomplete ?? false,
-                    ),
-                  )
-                  .toList();
-
           setState(() {
             _messages.clear();
-            _messages.addAll(loadedMessages);
-            _currentMessages = List.from(_messages);
+            _messages.addAll(
+              messages.map(
+                (msg) => ChatMessage(
+                  text: msg.text,
+                  isUser: msg.isUser,
+                  timestamp: msg.timestamp,
+                  isLoading: false,
+                  isError: msg.isError,
+                  thinkingProcess: msg.thinkingProcess,
+                  thinkingTime:
+                      msg.thinkingTimeMs != null
+                          ? Duration(milliseconds: msg.thinkingTimeMs!)
+                          : null,
+                  images: msg.imageBytes,
+                  isIncomplete: msg.isIncomplete ?? false,
+                ),
+              ),
+            );
             _activeConversationId = latestConversation.id;
           });
 
@@ -848,7 +780,7 @@ class _AIScreenState extends State<AIScreen>
   ) {
     final List<Map<String, dynamic>> contents = [];
 
-    final userProfiles = _userProfileBox?.values ?? [];
+    final userProfiles = _userProfileBox.values;
     final hasUserInfo = userProfiles.isNotEmpty;
     final userName = hasUserInfo ? userProfiles.first.name : '';
     final userInterests = hasUserInfo ? userProfiles.first.interests : '';
@@ -957,32 +889,10 @@ Current Year: $currentYear''';
     ];
 
     if (currentImages != null && currentImages.isNotEmpty) {
-      // Determine MIME type - default to JPEG for compatibility
-      String mimeType = 'image/jpeg';
-      // Try to detect PNG
-      if (currentImages.isNotEmpty && currentImages[0].length > 8) {
-        final firstBytes = currentImages[0].sublist(0, 8);
-        if (firstBytes[0] == 0x89 &&
-            firstBytes[1] == 0x50 &&
-            firstBytes[2] == 0x4E &&
-            firstBytes[3] == 0x47) {
-          mimeType = 'image/png';
-        } else if (firstBytes[0] == 0x47 &&
-            firstBytes[1] == 0x49 &&
-            firstBytes[2] == 0x46) {
-          mimeType = 'image/gif';
-        } else if (firstBytes[0] == 0x52 &&
-            firstBytes[1] == 0x49 &&
-            firstBytes[2] == 0x46 &&
-            firstBytes[3] == 0x46) {
-          mimeType = 'image/webp';
-        }
-      }
-
       for (var imageBytes in currentImages) {
         currentParts.add({
           'inline_data': {
-            'mime_type': mimeType,
+            'mime_type': 'image/jpeg',
             'data': base64Encode(imageBytes),
           },
         });
@@ -1124,7 +1034,9 @@ Current Year: $currentYear''';
       yield fullBufferedText;
     }
   }
+
   Future<void> _retryFailedRequest() async {
+    // Reset cancellation flag when user manually retries
     _isRetryCancelled = false;
 
     if (_lastFailedPrompt == null) {
@@ -1161,7 +1073,6 @@ Current Year: $currentYear''';
       setState(() {
         if (_messages.isNotEmpty && _messages.last.isError) {
           _messages.removeLast();
-          _currentMessages = List.from(_messages);
         }
       });
     }
@@ -1189,7 +1100,6 @@ Current Year: $currentYear''';
             isError: true,
           ),
         );
-        _currentMessages = List.from(_messages);
       });
     }
   }
@@ -1214,7 +1124,6 @@ Current Year: $currentYear''';
     setState(() {
       _isContinuingResponse = true;
       _isSendingMessage = true;
-      _isSendingNotifier.value = true;
       _isStreaming = true;
       _currentThinkingProcess = '';
       _isThinkingComplete = false;
@@ -1255,7 +1164,6 @@ Current Year: $currentYear''';
                 canRetry: true,
               ),
             );
-            _currentMessages = List.from(_messages);
             _resetContinueState();
           });
         },
@@ -1282,7 +1190,6 @@ Current Year: $currentYear''';
                 timestamp: DateTime.now(),
               ),
             );
-            _currentMessages = List.from(_messages);
             _resetContinueState();
             _lastIncompleteResponse = '';
           });
@@ -1302,7 +1209,6 @@ Current Year: $currentYear''';
             canRetry: true,
           ),
         );
-        _currentMessages = List.from(_messages);
         _resetContinueState();
       });
     }
@@ -1322,7 +1228,6 @@ Current Year: $currentYear''';
   void _resetContinueState() {
     _isContinuingResponse = false;
     _isSendingMessage = false;
-    _isSendingNotifier.value = false;
     _isStreaming = false;
     _currentStreamText = '';
     _currentThinkingProcess = '';
@@ -1411,12 +1316,10 @@ Current Year: $currentYear''';
     }
   }
 
-  Future<ConversationHive?> _resolveCurrentConversation() async {
-    if (_conversationBox == null) return null;
-
+  Future<ConversationHive> _resolveCurrentConversation() async {
     if (_forceNewConversation || _activeConversationId == null) {
       final conversationId =
-          '${DateTime.now().millisecondsSinceEpoch}_${_conversationBox!.length}';
+          '${DateTime.now().millisecondsSinceEpoch}_${_conversationBox.length}';
       final conversation =
           ConversationHive()
             ..id = conversationId
@@ -1424,13 +1327,13 @@ Current Year: $currentYear''';
             ..messageCount = _messages.length
             ..modelUsed = _selectedModel;
 
-      await _conversationBox!.add(conversation);
+      await _conversationBox.add(conversation);
       _forceNewConversation = false;
       _activeConversationId = conversationId;
       return conversation;
     }
 
-    final existing = _conversationBox!.values.firstWhere(
+    final existing = _conversationBox.values.firstWhere(
       (c) => c.id == _activeConversationId,
       orElse:
           () =>
@@ -1441,20 +1344,18 @@ Current Year: $currentYear''';
                 ..modelUsed = _selectedModel,
     );
 
-    if (!_conversationBox!.values.any((c) => c.id == _activeConversationId)) {
-      await _conversationBox!.add(existing);
+    if (!_conversationBox.values.any((c) => c.id == _activeConversationId)) {
+      await _conversationBox.add(existing);
     }
 
     return existing;
   }
 
   Future<void> _saveConversation() async {
-    if (!_enableHistory || _messages.isEmpty || _chatBox == null) return;
+    if (!_enableHistory || _messages.isEmpty) return;
 
     try {
       final currentConversation = await _resolveCurrentConversation();
-      if (currentConversation == null) return;
-
       currentConversation.lastMessageTimestamp = DateTime.now();
       currentConversation.messageCount = _messages.length;
       await currentConversation.save();
@@ -1462,7 +1363,7 @@ Current Year: $currentYear''';
       final finalConversationId = currentConversation.id;
 
       final oldMessages =
-          _chatBox!.values
+          _chatBox.values
               .where((msg) => msg.conversationId == finalConversationId)
               .toList();
 
@@ -1484,7 +1385,7 @@ Current Year: $currentYear''';
           isIncomplete: message.isIncomplete,
         );
 
-        await _chatBox!.add(chatMsg);
+        await _chatBox.add(chatMsg);
       }
 
       if (kDebugMode) {
@@ -1506,7 +1407,6 @@ Current Year: $currentYear''';
 
     setState(() {
       _messages.clear();
-      _currentMessages.clear();
       _currentStreamText = '';
       _selectedImages.clear();
       _currentThinkingProcess = '';
@@ -1520,7 +1420,6 @@ Current Year: $currentYear''';
       _partialResponseOnError = '';
       _forceNewConversation = true;
       _activeConversationId = null;
-      _updateSendButtonState();
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1538,39 +1437,33 @@ Current Year: $currentYear''';
 
     try {
       final messages =
-          _chatBox?.values
+          _chatBox.values
               .where((msg) => msg.conversationId == conversationId)
-              .toList() ??
-          [];
-      if (messages.isEmpty) return;
-      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+              .toList()
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       if (!mounted) return;
 
-      final loadedMessages =
-          messages
-              .map(
-                (msg) => ChatMessage(
-                  text: msg.text,
-                  isUser: msg.isUser,
-                  timestamp: msg.timestamp,
-                  isLoading: false,
-                  isError: msg.isError,
-                  thinkingProcess: msg.thinkingProcess,
-                  thinkingTime:
-                      msg.thinkingTimeMs != null
-                          ? Duration(milliseconds: msg.thinkingTimeMs!)
-                          : null,
-                  images: msg.imageBytes,
-                  isIncomplete: msg.isIncomplete ?? false,
-                ),
-              )
-              .toList();
-
       setState(() {
         _messages.clear();
-        _messages.addAll(loadedMessages);
-        _currentMessages = List.from(_messages);
+        _messages.addAll(
+          messages.map(
+            (msg) => ChatMessage(
+              text: msg.text,
+              isUser: msg.isUser,
+              timestamp: msg.timestamp,
+              isLoading: false,
+              isError: msg.isError,
+              thinkingProcess: msg.thinkingProcess,
+              thinkingTime:
+                  msg.thinkingTimeMs != null
+                      ? Duration(milliseconds: msg.thinkingTimeMs!)
+                      : null,
+              images: msg.imageBytes,
+              isIncomplete: msg.isIncomplete ?? false,
+            ),
+          ),
+        );
         _forceNewConversation = false;
         _activeConversationId = conversationId;
         _userScrolledUp = false;
@@ -1597,14 +1490,11 @@ Current Year: $currentYear''';
     if (_isSendingMessage) return;
 
     _messageController.clear();
-    _updateSendButtonState();
 
     if (mounted) {
       setState(() {
         _selectedImages.clear();
         _isSendingMessage = true;
-        _isSendingNotifier.value = true;
-        _updateSendButtonState();
       });
     }
 
@@ -1647,7 +1537,6 @@ Current Year: $currentYear''';
               images: images?.isNotEmpty == true ? List.from(images!) : null,
             ),
           );
-          _currentMessages = List.from(_messages);
         }
       });
     }
@@ -1714,6 +1603,7 @@ Current Year: $currentYear''';
         onError: (error) async {
           if (!mounted) return;
 
+          // Check if user cancelled
           if (_isRetryCancelled) {
             setState(() {
               _resetMessageState();
@@ -1732,6 +1622,7 @@ Current Year: $currentYear''';
               errorMessage.contains('429');
 
           if (isQuotaError) {
+            // QUOTA ERROR - Show error and DO NOT auto-retry
             if (mounted) {
               setState(() {
                 _messages.add(
@@ -1744,17 +1635,16 @@ Current Year: $currentYear''';
                     canRetry: true,
                   ),
                 );
-                _currentMessages = List.from(_messages);
                 _isStreaming = false;
                 _isSendingMessage = false;
-                _isSendingNotifier.value = false;
                 _resetMessageState();
               });
             }
-            return;
+            return; // Stop here - no auto-retry
           }
 
           // For network errors, show error and allow user to retry manually
+          // Do NOT auto-retry - let the user decide
           if (mounted) {
             setState(() {
               _messages.add(
@@ -1767,10 +1657,8 @@ Current Year: $currentYear''';
                   canRetry: true,
                 ),
               );
-              _currentMessages = List.from(_messages);
               _isStreaming = false;
               _isSendingMessage = false;
-              _isSendingNotifier.value = false;
               _resetMessageState();
             });
           }
@@ -1826,7 +1714,6 @@ Current Year: $currentYear''';
                 ),
               );
             }
-            _currentMessages = List.from(_messages);
             _resetMessageState();
             _retryCount = 0;
             _lastFailedPrompt = null;
@@ -1865,7 +1752,6 @@ Current Year: $currentYear''';
             canRetry: _retryCount < _maxRetries,
           ),
         );
-        _currentMessages = List.from(_messages);
         _resetMessageState();
       });
     }
@@ -1873,7 +1759,6 @@ Current Year: $currentYear''';
 
   void _resetMessageState() {
     _isSendingMessage = false;
-    _isSendingNotifier.value = false;
     _isStreaming = false;
     _currentStreamText = '';
     _currentThinkingProcess = '';
@@ -1964,7 +1849,7 @@ Current Year: $currentYear''';
 
   Future<void> _loadUserProfile() async {
     try {
-      final profiles = _userProfileBox?.values.toList() ?? [];
+      final profiles = _userProfileBox.values.toList();
       if (profiles.isNotEmpty) {
         final profile = profiles.first;
         _nameController.text = profile.name;
@@ -1979,7 +1864,7 @@ Current Year: $currentYear''';
 
   Future<void> _saveUserProfile() async {
     try {
-      await _userProfileBox?.clear();
+      await _userProfileBox.clear();
 
       final profile =
           UserProfileHive()
@@ -1988,7 +1873,7 @@ Current Year: $currentYear''';
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now();
 
-      await _userProfileBox?.add(profile);
+      await _userProfileBox.add(profile);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2047,7 +1932,6 @@ Current Year: $currentYear''';
         _retryCount = 0;
         _lastFailedPrompt = null;
         _lastFailedImages = null;
-        _updateSendButtonState();
       });
     }
   }
@@ -2064,13 +1948,12 @@ Current Year: $currentYear''';
 
   Widget _buildChatHistoryScreen() {
     final allConversations =
-        _conversationBox?.values
+        _conversationBox.values
             .where((c) => c.modelUsed == _selectedModel)
-            .toList() ??
-        [];
-    allConversations.sort(
-      (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-    );
+            .toList()
+          ..sort(
+            (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
+          );
 
     // Remove duplicates with same title (keep oldest)
     final uniqueConversations = <String, ConversationHive>{};
@@ -2079,6 +1962,7 @@ Current Year: $currentYear''';
       if (!uniqueConversations.containsKey(preview)) {
         uniqueConversations[preview] = conv;
       } else {
+        // Delete the duplicate conversation and its messages
         _deleteConversation(conv.id);
       }
     }
@@ -2424,7 +2308,6 @@ Current Year: $currentYear''';
                                       _loadChatHistoryForModel(_selectedModel);
                                     } else {
                                       _messages.clear();
-                                      _currentMessages.clear();
                                     }
                                   });
                                 }
@@ -2744,7 +2627,7 @@ Current Year: $currentYear''';
           _retryCount = 0;
           _lastFailedPrompt = null;
           _lastFailedImages = null;
-          _updateSendButtonState();
+        //  _updateSendButtonState();
         });
       }
     } else {
@@ -2759,7 +2642,7 @@ Current Year: $currentYear''';
           _isThinkingPhase = false;
           _lastIncompleteResponse = '';
           _isLoading = !kIsWeb;
-          _updateSendButtonState();
+        //  _updateSendButtonState();
         });
       }
       await _controller.loadRequest(Uri.parse(url));
@@ -2931,7 +2814,7 @@ Current Year: $currentYear''';
     );
   }
 
-  Future<void> _clearChatHistory() async {
+  void _clearChatHistory() async {
     final modelName =
         _availableModels.firstWhere((m) => m.id == _selectedModel).name;
 
@@ -2960,17 +2843,15 @@ Current Year: $currentYear''';
 
     try {
       final conversations =
-          _conversationBox?.values
+          _conversationBox.values
               .where((conv) => conv.modelUsed == _selectedModel)
-              .toList() ??
-          [];
+              .toList();
 
       for (final conv in conversations) {
         final messagesToDelete =
-            _chatBox?.values
+            _chatBox.values
                 .where((msg) => msg.conversationId == conv.id)
-                .toList() ??
-            [];
+                .toList();
 
         for (final msg in messagesToDelete) {
           await msg.delete();
@@ -2982,7 +2863,6 @@ Current Year: $currentYear''';
       if (mounted) {
         setState(() {
           _messages.clear();
-          _currentMessages.clear();
           _currentStreamText = '';
           _currentThinkingProcess = '';
           _isThinkingComplete = false;
@@ -3872,7 +3752,7 @@ Current Year: $currentYear''';
                                     ),
                                   ),
                                   const SizedBox(height: 16),
-                                  if (_userProfileBox?.values.isEmpty ?? true)
+                                  if (_userProfileBox.values.isEmpty)
                                     GestureDetector(
                                       onTap: _showProfileDialog,
                                       child: Container(
@@ -3945,7 +3825,8 @@ Current Year: $currentYear''';
                                         _messages[index].canRetry
                                             ? _retryFailedRequest
                                             : null,
-                                    onCancelPressed: _cancelRetry,
+                                    onCancelPressed:
+                                        _cancelRetry, // ADD THIS LINE
                                   );
                                 } else {
                                   if (_isThinkingPhase && _enableThinking) {
@@ -4051,7 +3932,8 @@ Current Year: $currentYear''';
                                       enableAutoScroll: _enableAutoScroll,
                                       onContinuePressed: null,
                                       onRetryPressed: null,
-                                      onCancelPressed: _cancelRetry,
+                                      onCancelPressed:
+                                          _cancelRetry, // ADD THIS LINE
                                     );
                                   }
                                 }
@@ -4182,8 +4064,6 @@ Current Year: $currentYear''';
                                                 if (mounted) {
                                                   setState(() {
                                                     _isSendingMessage = false;
-                                                    _isSendingNotifier.value =
-                                                        false;
                                                     _isStreaming = false;
                                                     _currentStreamText = '';
                                                     _currentThinkingProcess =
@@ -4201,9 +4081,7 @@ Current Year: $currentYear''';
                                             )
                                             : null,
                                   ),
-                                  onChanged: (value) {
-                                    _updateSendButtonState();
-                                  },
+                                  onChanged: (value) {},
                                   onSubmitted: (_) {
                                     if (!_isSendingMessage) {
                                       _sendGeminiMessage();
@@ -4215,51 +4093,40 @@ Current Year: $currentYear''';
 
                             const SizedBox(width: 6),
 
-                            // Send button with ValueListenableBuilder to avoid full rebuilds
-                            ValueListenableBuilder<bool>(
-                              valueListenable: _hasTextOrImages,
-                              builder: (context, hasContent, child) {
-                                return ValueListenableBuilder<bool>(
-                                  valueListenable: _isSendingNotifier,
-                                  builder: (context, isSending, child) {
-                                    return Container(
-                                      margin: const EdgeInsets.only(bottom: 6),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            isSending || !hasContent
-                                                ? Colors.grey.shade700
-                                                : Colors.lightBlue,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: IconButton(
-                                        icon:
-                                            isSending
-                                                ? const SizedBox(
-                                                  width: 18,
-                                                  height: 18,
-                                                  child: CircularProgressIndicator(
-                                                    strokeWidth: 2,
-                                                    valueColor:
-                                                        AlwaysStoppedAnimation<
-                                                          Color
-                                                        >(Colors.white),
-                                                  ),
-                                                )
-                                                : const Icon(
-                                                  Icons.send,
-                                                  color: Colors.white,
-                                                  size: 20,
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              decoration: BoxDecoration(
+                                color:
+                                    _isSendingMessage
+                                        ? Colors.grey.shade700
+                                        : Colors.lightBlue,
+                                shape: BoxShape.circle,
+                              ),
+                              child: IconButton(
+                                icon:
+                                    _isSendingMessage
+                                        ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Colors.white,
                                                 ),
-                                        onPressed: () async {
-                                          if (!isSending && hasContent) {
-                                            await _sendGeminiMessage();
-                                          }
-                                        },
-                                      ),
-                                    );
-                                  },
-                                );
-                              },
+                                          ),
+                                        )
+                                        : const Icon(
+                                          Icons.send,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                onPressed: () async {
+                                  if (!_isSendingMessage) {
+                                    await _sendGeminiMessage();
+                                  }
+                                },
+                              ),
                             ),
                           ],
                         ),
@@ -4323,34 +4190,6 @@ Current Year: $currentYear''';
   @override
   Widget build(BuildContext context) {
     super.build(context);
-
-    // Show loading while Hive initializes
-    if (_isHiveLoading) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: CircularProgressIndicator(
-                  color: Colors.orange,
-                  strokeWidth: 3,
-                ),
-              ),
-              SizedBox(height: 16),
-              Text(
-                'Loading...',
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     if (_showPlatformSelection) {
       return _buildPlatformSelection();
     } else if (_usingGeminiAPI) {
@@ -4418,7 +4257,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
   final bool enableAutoScroll;
   final VoidCallback? onContinuePressed;
   final VoidCallback? onRetryPressed;
-  final VoidCallback? onCancelPressed;
+  final VoidCallback? onCancelPressed; // ADD THIS LINE
 
   const ChatBubbleWithThinking({
     super.key,
@@ -4426,7 +4265,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
     this.enableAutoScroll = false,
     this.onContinuePressed,
     this.onRetryPressed,
-    this.onCancelPressed,
+    this.onCancelPressed, // ADD THIS LINE
   });
 
   @override
@@ -4434,7 +4273,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
 }
 
 class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
-  bool _isThinkingExpanded = false;
+  bool _isThinkingExpanded = false; // Initially collapsed
 
   String _formatThinkingTime(Duration duration) {
     if (duration.inSeconds < 1) {
@@ -4817,6 +4656,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ],
       );
     } else if (message.isError) {
+      // Make sure error text is always shown
       final displayText =
           message.text.isEmpty
               ? '⚠️ An error occurred. Tap Retry to try again.'
@@ -4854,7 +4694,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     return Container(
       margin: const EdgeInsets.only(top: 4),
       child: ElevatedButton(
-        onPressed: widget.onCancelPressed,
+        onPressed: widget.onCancelPressed, // USE THE CALLBACK
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.red.withAlpha(30),
           foregroundColor: Colors.redAccent,
@@ -4940,6 +4780,11 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   }
 
   Widget _buildActionButtons() {
+    // Don't show buttons if:
+    // - Message is from user
+    // - Message is loading
+    // - Message text is empty
+    // - Message is an error
     if (widget.message.isUser ||
         widget.message.isLoading ||
         widget.message.text.isEmpty ||
