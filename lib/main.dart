@@ -13,10 +13,9 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'firebase_options.dart';
-import 'hive_models.dart'; // ADD THIS IMPORT
+import 'firebase_options.dart'; // ✅ ADD THIS IMPORT
 
-
+// REMOVED: Old browser imports
 // ================== GLOBAL STREAMS ==================
 final StreamController<Map<String, String>> deepLinkController =
     StreamController<Map<String, String>>.broadcast();
@@ -29,10 +28,14 @@ Future<void> main() async {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
 
+      // Enable edge-to-edge (skip on web)
       if (!kIsWeb) {
         _enableEdgeToEdge();
       }
 
+      // Initialize core services (PARALLEL FOR SPEED)
+      // 1. Load critical config firs
+      // 1. Load critical config first (mobile only — web uses build-time secrets)
       if (!kIsWeb) {
         try {
           await dotenv.load(fileName: ".env");
@@ -41,34 +44,46 @@ Future<void> main() async {
         }
       }
 
+      // 2. Now initialize services that DEPEND on dotenv
+      // ===== WEB COMPATIBILITY: Only initializ MobileAds on mobile =====
+      // Google Mobile Ads doesn't work on web, so skip it
       if (!kIsWeb) {
         await MobileAds.instance.initialize();
       }
 
-      // Initialize Hive FIRST with all adapters registered
-      await _initializeHiveWithAdapters();
-
       await Future.wait([
-        Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
+        Firebase.initializeApp(
+          options:
+              DefaultFirebaseOptions
+                  .currentPlatform, // ✅ FIX: Use correct config
+        ),
+        _initializeHive(), // Simple Hive initialization (no browser adapters here)
         GeminiService.instance.initialize(),
       ]);
 
+      // ===== WEB COMPATIBILITY: Only initialize AdService on mobile =====
       if (!kIsWeb) {
+        // Initialize AdService and preload first interstitial
         AdService.instance.loadInterstitialAd();
-        AdService.instance.startIntervalTimer();
+        AdService.instance.startIntervalTimer(); // Start 5-minute timer
 
+        // Show ad immediately after first frame
         WidgetsBinding.instance.addPostFrameCallback((_) {
           AdService.instance.showInterstitialAd();
         });
       }
 
+      // ===== WEB COMPATIBILITY: Setup error reporting =====
+      // Skip Crashlytics on web if not configured
       if (!kIsWeb) {
+        // Setup error reporting
         FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterError;
         PlatformDispatcher.instance.onError = (error, stack) {
           FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
           return true;
         };
       } else {
+        // Web fallback error handling
         FlutterError.onError = (error) {
           if (kDebugMode) {
             print('Flutter Error: $error');
@@ -82,13 +97,17 @@ Future<void> main() async {
         };
       }
 
+      // Handle initial deep link
       await _handleInitialDeepLink();
 
+      // RUN APP IMMEDIATELY - No database slowing things down
       runApp(const MyApp());
 
+      // Initialize deep links after app starts
       _initDeepLinks();
     },
     (error, stack) {
+      // Only send to Crashlytics if not on web
       if (!kIsWeb) {
         FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
       } else {
@@ -100,32 +119,24 @@ Future<void> main() async {
   );
 }
 
-Future<void> _initializeHiveWithAdapters() async {
+Future<void> _initializeHive() async {
   try {
+    // Initialize Hive with Flutter
     await Hive.initFlutter();
 
-    // Register all adapters
-    if (!Hive.isAdapterRegistered(0)) {
-      Hive.registerAdapter(ChatMessageHiveAdapter());
-    }
-    if (!Hive.isAdapterRegistered(1)) {
-      Hive.registerAdapter(ConversationHiveAdapter());
-    }
-    if (!Hive.isAdapterRegistered(2)) {
-      Hive.registerAdapter(UserProfileHiveAdapter());
-    }
-
     if (kDebugMode) {
-      print('✅ Hive initialized with all adapters registered');
+      print('✅ Hive initialized');
     }
   } catch (e) {
     if (kDebugMode) {
       print('⚠️ Hive initialization error: $e');
+      print('⚠️ Continuing without Hive for now...');
     }
   }
 }
 
 void _enableEdgeToEdge() {
+  // Web compatibility: SystemChrome only works on mobile
   if (!kIsWeb) {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(
@@ -162,6 +173,7 @@ Future<void> _handleInitialDeepLink() async {
       if (kDebugMode) print('Initial deep link: $initialUri');
       _initialDeepLink = initialUri;
 
+      // Handle browser deep links (http/https URLs)
       if (initialUri.scheme.startsWith('http')) {
         _handleBrowserDeepLink(initialUri);
       }
@@ -179,6 +191,7 @@ void _initDeepLinks() {
       if (kDebugMode) print('Deep link: $uri');
       _handleDeepLink(uri);
 
+      // Handle browser deep links
       if (uri != null && uri.scheme.startsWith('http')) {
         _handleBrowserDeepLink(uri);
       }
@@ -189,7 +202,9 @@ void _initDeepLinks() {
   );
 }
 
+// Handle browser-specific deep links
 void _handleBrowserDeepLink(Uri uri) {
+  // Add to stream for browser navigation
   deepLinkController.add({
     'type': 'browser',
     'url': uri.toString(),
@@ -200,16 +215,22 @@ void _handleBrowserDeepLink(Uri uri) {
 void _handleDeepLink(Uri? uri) {
   if (uri == null) return;
 
+  // Handle browser URLs (http/https)
   if (uri.scheme.startsWith('http')) {
     _handleBrowserDeepLink(uri);
     return;
   }
 
+  // Handle custom scheme: arina://cave/post/123
   if (uri.scheme == 'arina' && uri.host == 'cave') {
     _handleCustomScheme(uri);
-  } else if (uri.scheme == 'https' && uri.host == 'maarav1.github.io') {
+  }
+  // Handle GitHub Pages
+  else if (uri.scheme == 'https' && uri.host == 'maarav1.github.io') {
     _handleGitHubPagesLink(uri);
-  } else if (uri.scheme == 'https' &&
+  }
+  // Handle hash parameters
+  else if (uri.scheme == 'https' &&
       uri.host == 'maarav1.github.io' &&
       uri.fragment.isNotEmpty) {
     _handleHashParameters(uri);
@@ -312,6 +333,7 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
+    // Listen for deep links
     _deepLinkSubscription = deepLinkController.stream.listen(
       _navigateFromDeepLink,
       onError: (error) {
@@ -319,6 +341,7 @@ class _MyAppState extends State<MyApp> {
       },
     );
 
+    // Handle initial deep link
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_initialLinkHandled && _initialDeepLink != null) {
         _handleDeepLink(_initialDeepLink);
@@ -330,6 +353,7 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     _deepLinkSubscription?.cancel();
+    // Web compatibility: Only dispose AdService if not on web
     if (!kIsWeb) {
       AdService.instance.stopIntervalTimer();
       AdService.instance.dispose();
@@ -368,6 +392,7 @@ class _MyAppState extends State<MyApp> {
           GoRouter.of(context).push('/user/$id');
           break;
         case 'browser':
+          // Navigate to browser with URL
           if (url != null && url.isNotEmpty) {
             GoRouter.of(
               context,
