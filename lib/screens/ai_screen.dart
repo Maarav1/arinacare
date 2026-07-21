@@ -25,7 +25,7 @@ class AIScreen extends StatefulWidget {
 }
 
 class _AIScreenState extends State<AIScreen>
-    with AutomaticKeepAliveClientMixin {
+  with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   late final WebViewController _controller;
   bool _isLoading = false;
   bool _showPlatformSelection = true;
@@ -47,9 +47,13 @@ class _AIScreenState extends State<AIScreen>
   final List<ChatMessage> _messages = [];
   bool _geminiInitialized = false;
   bool _isSendingMessage = false;
+  
   bool _enableThinking = false;
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _interestsController = TextEditingController();
+  // ValueNotifier for send button state to avoid full rebuilds
+  final ValueNotifier<bool> _hasTextOrImages = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _isSendingNotifier = ValueNotifier<bool>(false);
 
   bool _forceNewConversation = false;
   String? _activeConversationId;
@@ -58,6 +62,7 @@ class _AIScreenState extends State<AIScreen>
   StreamSubscription<String>? _streamSubscription;
   bool _isStreaming = false;
   late ScrollController _scrollController;
+  bool _isHiveLoading = true;
 
   String _lastIncompleteResponse = '';
   bool _isContinuingResponse = false;
@@ -182,6 +187,7 @@ class _AIScreenState extends State<AIScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeHive();
     _initializeApiKey();
     _initializeWebView();
@@ -196,14 +202,15 @@ class _AIScreenState extends State<AIScreen>
 
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
-    _messageController.addListener(_onMessageTextChanged);
+    _messageController.addListener(_updateSendButtonState);
   }
 
-  void _onMessageTextChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+  void _updateSendButtonState() {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    final hasImages = _selectedImages.isNotEmpty;
+    _hasTextOrImages.value = hasText || hasImages;
   }
+
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
@@ -250,51 +257,82 @@ class _AIScreenState extends State<AIScreen>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused) {
+      _saveConversation();
+    }
+  }
+
+  @override
   void dispose() {
-    _cleanupResources();
+    _cleanupResourcesSync();
     super.dispose();
   }
 
-  Future<void> _cleanupResources() async {
-    await _cancelCurrentStream();
-    _streamSubscription?.cancel();
-    _streamSubscription = null;
+  void _cleanupResourcesSync() {
+    // Cancel all timers synchronously
+    _interstitialTimer?.cancel();
+    _interstitialTimer = null;
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = null;
+
+    // Cancel stream subscription synchronously
+    _streamSubscription?.cancel();
+    _streamSubscription = null;
+
+    // Dispose controllers
     _scrollController.removeListener(_onScroll);
-    _messageController.removeListener(_onMessageTextChanged);
+    _messageController.removeListener(_updateSendButtonState);
     _messageController.dispose();
     _nameController.dispose();
     _interestsController.dispose();
     _inputFocusNode?.dispose();
     _scrollController.dispose();
+    _hasTextOrImages.dispose(); // ADD THIS
+    _isSendingNotifier.dispose(); 
 
+    // Dispose ads
     if (!kIsWeb) {
       _bannerAd.dispose();
-      _interstitialTimer?.cancel();
-      if (_interstitialAd != null) {
-        _interstitialAd!.dispose();
-      }
+      _interstitialAd?.dispose();
     }
 
-    await _saveConversation();
+    // Fire-and-forget save
+    _saveConversation();
   }
 
   Future<void> _initializeHive() async {
-    // Hive should already be initialized in main.dart
-    // but we ensure boxes are open
-    _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
-    _conversationBox = await Hive.openBox<ConversationHive>('conversations');
-    _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
+    try {
+      _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
+      _conversationBox = await Hive.openBox<ConversationHive>('conversations');
+      _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
 
-    await _loadUserProfile();
-    await _loadChatHistoryForModel(_selectedModel);
-    _cleanOldConversations();
+      await _loadUserProfile();
+      await _loadChatHistoryForModel(_selectedModel);
+      await _cleanOldConversations();
+
+      if (mounted) {
+        setState(() {
+          _isHiveLoading = false;
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Error initializing Hive: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _isHiveLoading = false;
+        });
+      }
+    }
   }
 
-  void _cleanOldConversations() async {
+  Future<void> _cleanOldConversations() async {
+    if (_isHiveLoading) return; // ADD THIS LINE
     final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
 
     final oldConversations =
@@ -454,7 +492,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-  void _changeModel(String newModel) async {
+  Future<void> _changeModel(String newModel) async {
     await _saveConversation();
     await _cancelCurrentStream();
 
@@ -590,6 +628,7 @@ class _AIScreenState extends State<AIScreen>
 
   Future<void> _loadChatHistoryForModel(String modelId) async {
     if (!_enableHistory) return;
+    if (_isHiveLoading) return; // ADD THIS LINE
 
     try {
       final allConversations =
@@ -879,10 +918,40 @@ Current Year: $currentYear''';
     ];
 
     if (currentImages != null && currentImages.isNotEmpty) {
+      // Determine MIME type
+      String mimeType = 'image/jpeg';
+      if (currentImages.isNotEmpty && currentImages[0].length > 8) {
+        final firstBytes = currentImages[0].sublist(0, 8);
+        // PNG
+        if (firstBytes[0] == 0x89 &&
+            firstBytes[1] == 0x50 &&
+            firstBytes[2] == 0x4E &&
+            firstBytes[3] == 0x47) {
+          mimeType = 'image/png';
+        }
+        // GIF
+        else if (firstBytes[0] == 0x47 &&
+            firstBytes[1] == 0x49 &&
+            firstBytes[2] == 0x46) {
+          mimeType = 'image/gif';
+        }
+        // WebP
+        else if (firstBytes[0] == 0x52 &&
+            firstBytes[1] == 0x49 &&
+            firstBytes[2] == 0x46 &&
+            firstBytes[3] == 0x46) {
+          mimeType = 'image/webp';
+        }
+        // BMP
+        else if (firstBytes[0] == 0x42 && firstBytes[1] == 0x4D) {
+          mimeType = 'image/bmp';
+        }
+      }
+
       for (var imageBytes in currentImages) {
         currentParts.add({
           'inline_data': {
-            'mime_type': 'image/jpeg',
+            'mime_type': mimeType,
             'data': base64Encode(imageBytes),
           },
         });
@@ -954,7 +1023,13 @@ Current Year: $currentYear''';
     request.headers.addAll(headers);
     request.body = jsonEncode(requestBody);
 
-    final streamedResponse = await request.send();
+    // Add timeout
+    final streamedResponse = await request.send().timeout(
+      const Duration(seconds: 90),
+      onTimeout: () {
+        throw Exception('Request timed out after 90 seconds');
+      },
+    );
 
     if (streamedResponse.statusCode != 200) {
       final errorBody = await streamedResponse.stream.bytesToString();
@@ -1080,6 +1155,7 @@ Current Year: $currentYear''';
     if (mounted) {
       setState(() {
         _isSendingMessage = false;
+        _isSendingNotifier.value = false;
         _isStreaming = false;
         _currentStreamText = '';
         _messages.add(
@@ -1218,6 +1294,7 @@ Current Year: $currentYear''';
   void _resetContinueState() {
     _isContinuingResponse = false;
     _isSendingMessage = false;
+    _isSendingNotifier.value = false;
     _isStreaming = false;
     _currentStreamText = '';
     _currentThinkingProcess = '';
@@ -1343,7 +1420,7 @@ Current Year: $currentYear''';
 
   Future<void> _saveConversation() async {
     if (!_enableHistory || _messages.isEmpty) return;
-
+    if (_isHiveLoading) return; // ADD THIS LINE
     try {
       final currentConversation = await _resolveCurrentConversation();
       currentConversation.lastMessageTimestamp = DateTime.now();
@@ -1485,12 +1562,20 @@ Current Year: $currentYear''';
       setState(() {
         _selectedImages.clear();
         _isSendingMessage = true;
+        _isSendingNotifier.value = true;
+        _updateSendButtonState();
       });
+    }
+
+    // Compress images before sending
+    List<Uint8List>? compressedImages;
+    if (images.isNotEmpty) {
+      compressedImages = await _compressImages(images);
     }
 
     await _sendGeminiMessageInternal(
       message.isEmpty ? "[Image analysis request]" : message,
-      images: images.isNotEmpty ? images : null,
+      images: compressedImages,
       isRetry: false,
     );
   }
@@ -1549,46 +1634,55 @@ Current Year: $currentYear''';
         images: images,
       ).listen(
         (chunk) {
-          if (!mounted) return;
+          try {
+            // ADD TRY BLOCK
+            if (!mounted) return;
 
-          setState(() {
-            accumulatedResponse += chunk;
-            _partialResponseOnError = accumulatedResponse;
-            _hasPartialResponse = true;
+            setState(() {
+              accumulatedResponse += chunk;
+              _partialResponseOnError = accumulatedResponse;
+              _hasPartialResponse = true;
 
-            if (_enableThinking) {
-              if (!thinkingDetected &&
-                  accumulatedResponse.contains('THINKING_START')) {
-                thinkingDetected = true;
-                _isThinkingPhase = true;
+              if (_enableThinking) {
+                if (!thinkingDetected &&
+                    accumulatedResponse.contains('THINKING_START')) {
+                  thinkingDetected = true;
+                  _isThinkingPhase = true;
 
-                final parsed = _parseThinkingResponse(accumulatedResponse);
-                if (parsed.thinkingProcess.isNotEmpty) {
-                  _currentThinkingProcess = parsed.thinkingProcess;
-                  _currentStreamText = '';
-                }
-              } else if (thinkingDetected && !_isThinkingComplete) {
-                final parsed = _parseThinkingResponse(accumulatedResponse);
-                if (parsed.thinkingProcess.isNotEmpty) {
-                  _currentThinkingProcess = parsed.thinkingProcess;
-                }
+                  final parsed = _parseThinkingResponse(accumulatedResponse);
+                  if (parsed.thinkingProcess.isNotEmpty) {
+                    _currentThinkingProcess = parsed.thinkingProcess;
+                    _currentStreamText = '';
+                  }
+                } else if (thinkingDetected && !_isThinkingComplete) {
+                  final parsed = _parseThinkingResponse(accumulatedResponse);
+                  if (parsed.thinkingProcess.isNotEmpty) {
+                    _currentThinkingProcess = parsed.thinkingProcess;
+                  }
 
-                if (accumulatedResponse.contains('THINKING_END')) {
-                  if (_thinkingStopwatch.isRunning) _thinkingStopwatch.stop();
-                  _isThinkingComplete = true;
-                  _isThinkingPhase = false;
+                  if (accumulatedResponse.contains('THINKING_END')) {
+                    if (_thinkingStopwatch.isRunning) _thinkingStopwatch.stop();
+                    _isThinkingComplete = true;
+                    _isThinkingPhase = false;
+                    _currentStreamText = parsed.finalResponse;
+                  }
+                } else if (_isThinkingComplete) {
+                  final parsed = _parseThinkingResponse(accumulatedResponse);
                   _currentStreamText = parsed.finalResponse;
                 }
-              } else if (_isThinkingComplete) {
-                final parsed = _parseThinkingResponse(accumulatedResponse);
-                _currentStreamText = parsed.finalResponse;
+              } else {
+                _currentStreamText = accumulatedResponse;
               }
-            } else {
-              _currentStreamText = accumulatedResponse;
-            }
-          });
+            });
 
-          _scheduleAutoScroll();
+            _scheduleAutoScroll();
+          } catch (e) {
+            // CATCH ERRORS IN THE STREAM
+            if (kDebugMode) {
+              print('⚠️ Stream chunk error: $e');
+            }
+            // Don't crash, just continue
+          }
         },
         onError: (error) async {
           if (!mounted) return;
@@ -1627,6 +1721,7 @@ Current Year: $currentYear''';
                 );
                 _isStreaming = false;
                 _isSendingMessage = false;
+                _isSendingNotifier.value = false;
                 _resetMessageState();
               });
             }
@@ -1649,6 +1744,7 @@ Current Year: $currentYear''';
               );
               _isStreaming = false;
               _isSendingMessage = false;
+              _isSendingNotifier.value = false;
               _resetMessageState();
             });
           }
@@ -1747,8 +1843,26 @@ Current Year: $currentYear''';
     }
   }
 
+  Future<List<Uint8List>> _compressImages(List<Uint8List> images) async {
+    final List<Uint8List> compressed = [];
+    for (var image in images) {
+      try {
+        // Already compressed when picked (imageQuality: 85)
+        // But we can further compress if needed
+        compressed.add(image);
+      } catch (e) {
+        if (kDebugMode) {
+          print('⚠️ Image compression error: $e');
+        }
+        compressed.add(image); // Use original if compression fails
+      }
+    }
+    return compressed;
+  }
+
   void _resetMessageState() {
     _isSendingMessage = false;
+    _isSendingNotifier.value = false;
     _isStreaming = false;
     _currentStreamText = '';
     _currentThinkingProcess = '';
@@ -1902,6 +2016,29 @@ Current Year: $currentYear''';
     _isThinkingPhase = false;
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
+
+    // Also reset sending state if still true
+    if (_isSendingMessage) {
+      setState(() {
+        _isSendingMessage = false;
+        _isSendingNotifier.value = false;
+      });
+    }
+  }
+
+  void _stopGenerating() {
+    _cancelCurrentStream();
+    if (mounted) {
+      setState(() {
+        _isStreaming = false;
+        _isSendingMessage = false;
+        _isSendingNotifier.value = false;
+        _currentStreamText = '';
+        _currentThinkingProcess = '';
+        _isThinkingComplete = false;
+        _isThinkingPhase = false;
+      });
+    }
   }
 
   Future<void> _showPlatformSelectionScreen() async {
@@ -2617,7 +2754,7 @@ Current Year: $currentYear''';
           _retryCount = 0;
           _lastFailedPrompt = null;
           _lastFailedImages = null;
-        //  _updateSendButtonState();
+         _updateSendButtonState();
         });
       }
     } else {
@@ -2632,7 +2769,7 @@ Current Year: $currentYear''';
           _isThinkingPhase = false;
           _lastIncompleteResponse = '';
           _isLoading = !kIsWeb;
-        //  _updateSendButtonState();
+          _updateSendButtonState();
         });
       }
       await _controller.loadRequest(Uri.parse(url));
@@ -2804,7 +2941,7 @@ Current Year: $currentYear''';
     );
   }
 
-  void _clearChatHistory() async {
+  Future<void> _clearChatHistory() async {
     final modelName =
         _availableModels.firstWhere((m) => m.id == _selectedModel).name;
 
@@ -3788,8 +3925,10 @@ Current Year: $currentYear''';
                                 ],
                               ),
                             )
-                            : ListView.builder(
+                           : ListView.builder(
                               controller: _scrollController,
+                              physics:
+                                  const BouncingScrollPhysics(), // ADD THIS
                               padding: const EdgeInsets.only(
                                 top: 4,
                                 bottom: 100,
@@ -3799,7 +3938,9 @@ Current Year: $currentYear''';
                               itemCount:
                                   _messages.length +
                                   (_currentStreamText.isNotEmpty ||
-                                          _isThinkingPhase
+                                          _isThinkingPhase ||
+                                          (_isStreaming &&
+                                              _messages.isNotEmpty) // ADD THIS
                                       ? 1
                                       : 0),
                               itemBuilder: (context, index) {
@@ -4049,24 +4190,8 @@ Current Year: $currentYear''';
                                                 color: Colors.red,
                                                 size: 18,
                                               ),
-                                              onPressed: () async {
-                                                await _cancelCurrentStream();
-                                                if (mounted) {
-                                                  setState(() {
-                                                    _isSendingMessage = false;
-                                                    _isStreaming = false;
-                                                    _currentStreamText = '';
-                                                    _currentThinkingProcess =
-                                                        '';
-                                                    _isThinkingComplete = false;
-                                                    _isThinkingPhase = false;
-                                                  });
-                                                }
-                                                if (_inputFocusNode?.hasFocus ==
-                                                    false) {
-                                                  _inputFocusNode
-                                                      ?.requestFocus();
-                                                }
+                                              onPressed: () {
+                                                _stopGenerating();
                                               },
                                             )
                                             : null,
@@ -4083,40 +4208,53 @@ Current Year: $currentYear''';
 
                             const SizedBox(width: 6),
 
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 6),
-                              decoration: BoxDecoration(
-                                color:
-                                    _isSendingMessage
-                                        ? Colors.grey.shade700
-                                        : Colors.lightBlue,
-                                shape: BoxShape.circle,
-                              ),
-                              child: IconButton(
-                                icon:
-                                    _isSendingMessage
-                                        ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                  Colors.white,
+                            ValueListenableBuilder<bool>(
+                              valueListenable: _hasTextOrImages,
+                              builder: (context, hasContent, child) {
+                                return ValueListenableBuilder<bool>(
+                                  valueListenable: _isSendingNotifier,
+                                  builder: (context, isSending, child) {
+                                    return Container(
+                                      margin: const EdgeInsets.only(bottom: 6),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            isSending || !hasContent
+                                                ? Colors.grey.shade700
+                                                : Colors.lightBlue,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: IconButton(
+                                        icon:
+                                            isSending
+                                                ? const SizedBox(
+                                                  width: 18,
+                                                  height: 18,
+                                                  child: CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation<
+                                                          Color
+                                                        >(Colors.white),
+                                                  ),
+                                                )
+                                                : const Icon(
+                                                  Icons.send,
+                                                  color: Colors.white,
+                                                  size: 20,
                                                 ),
-                                          ),
-                                        )
-                                        : const Icon(
-                                          Icons.send,
-                                          color: Colors.white,
-                                          size: 20,
-                                        ),
-                                onPressed: () async {
-                                  if (!_isSendingMessage) {
-                                    await _sendGeminiMessage();
-                                  }
-                                },
-                              ),
+                                        onPressed: () async {
+                                          if (!isSending && hasContent) {
+                                            if (!kIsWeb) {
+                                              HapticFeedback.lightImpact(); // ADD HAPTIC
+                                            }
+                                            await _sendGeminiMessage();
+                                          }
+                                        },
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -4180,6 +4318,33 @@ Current Year: $currentYear''';
   @override
   Widget build(BuildContext context) {
     super.build(context);
+
+    if (_isHiveLoading) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: CircularProgressIndicator(
+                  color: Colors.orange,
+                  strokeWidth: 3,
+                ),
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Loading...',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_showPlatformSelection) {
       return _buildPlatformSelection();
     } else if (_usingGeminiAPI) {
