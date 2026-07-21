@@ -283,18 +283,8 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Future<void> _initializeHive() async {
-    if (!Hive.isAdapterRegistered(0)) {
-      Hive.registerAdapter(ChatMessageHiveAdapter());
-    }
-    if (!Hive.isAdapterRegistered(1)) {
-      Hive.registerAdapter(ConversationHiveAdapter());
-    }
-    if (!Hive.isAdapterRegistered(2)) {
-      Hive.registerAdapter(UserProfileHiveAdapter());
-    }
-
-    await Hive.initFlutter();
-
+    // Hive should already be initialized in main.dart
+    // but we ensure boxes are open
     _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
     _conversationBox = await Hive.openBox<ConversationHive>('conversations');
     _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');

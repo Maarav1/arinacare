@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:arina_cave/router/app_router.dart';
-import 'package:arina_cave/screens/gemini_service.dart';
+
 import 'package:arina_cave/services/ad_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +14,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'firebase_options.dart'; // ✅ ADD THIS IMPORT
+import 'screens/hive_models.dart';
 
 // REMOVED: Old browser imports
 // ================== GLOBAL STREAMS ==================
@@ -51,15 +52,13 @@ Future<void> main() async {
         await MobileAds.instance.initialize();
       }
 
-      await Future.wait([
-        Firebase.initializeApp(
-          options:
-              DefaultFirebaseOptions
-                  .currentPlatform, // ✅ FIX: Use correct config
-        ),
-        _initializeHive(), // Simple Hive initialization (no browser adapters here)
-        GeminiService.instance.initialize(),
-      ]);
+      // ✅ Initialize Hive with adapters FIRST
+      await _initializeHiveWithAdapters();
+
+      // ✅ Then initialize Firebase (comment out GeminiService if not needed)
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
 
       // ===== WEB COMPATIBILITY: Only initialize AdService on mobile =====
       if (!kIsWeb) {
@@ -119,13 +118,25 @@ Future<void> main() async {
   );
 }
 
-Future<void> _initializeHive() async {
+Future<void> _initializeHiveWithAdapters() async {
   try {
     // Initialize Hive with Flutter
     await Hive.initFlutter();
 
+    // Register all adapters BEFORE opening any boxes
+    // These adapters must match the ones used in the AI screen
+    if (!Hive.isAdapterRegistered(0)) {
+      Hive.registerAdapter(ChatMessageHiveAdapter());
+    }
+    if (!Hive.isAdapterRegistered(1)) {
+      Hive.registerAdapter(ConversationHiveAdapter());
+    }
+    if (!Hive.isAdapterRegistered(2)) {
+      Hive.registerAdapter(UserProfileHiveAdapter());
+    }
+
     if (kDebugMode) {
-      print('✅ Hive initialized');
+      print('✅ Hive initialized with all adapters registered');
     }
   } catch (e) {
     if (kDebugMode) {
