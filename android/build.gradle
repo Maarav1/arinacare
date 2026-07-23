@@ -1,8 +1,10 @@
 allprojects {
     repositories {
-        google()
+        gradlePluginPortal()
         mavenCentral()
         maven { url "https://artifacts.applovin.com/android" }
+        maven { url "https://maven.google.com" }
+        maven { url "https://repo.maven.apache.org/maven2" }
     }
 
     
@@ -11,7 +13,7 @@ allprojects {
     configurations.all {
         resolutionStrategy {
             eachDependency { details ->
-                // Force all org.jetbrains.kotlin dependencies to 2.1.0
+                // Force all org.jetbrains.kotlin dependencies to '2.1.0'
                 if (details.requested.group == 'org.jetbrains.kotlin') {
                     details.useVersion '2.1.0'
                 }
@@ -20,10 +22,9 @@ allprojects {
             force(
                 'org.jetbrains.kotlin:kotlin-stdlib:2.1.0',
                 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.0',
-                'org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.1.0',
+                'org.jetbrains.kotlin:kotlin-stdlib-jdk17:2.1.0',
                 'org.jetbrains.kotlin:kotlin-reflect:2.1.0',
-                // This is the missing library causing the error
-                'org.jetbrains.kotlin:kotlin-build-tools-impl:2.1.0'
+                'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0'
             )
         }
     }

@@ -85,7 +85,7 @@ class _AIScreenState extends State<AIScreen>
       isRecommended: true,
     ),
     GeminiModel(
-      id: 'gemini-flash-latest',
+      id: 'gemini-3.6-flash',
       name: 'Gemini 2.5 Pro',
       description: 'Complex reasoning',
       priority: 'High Reasoning',
