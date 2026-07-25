@@ -640,17 +640,24 @@ class _AIScreenState extends State<AIScreen>
                   b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
             );
 
-      // Remove duplicate conversations with same title (keep oldest)
-      final uniqueConversations = <String, ConversationHive>{};
-      for (final conv in allConversations) {
-        final preview = _getConversationPreview(conv.id);
-        if (!uniqueConversations.containsKey(preview)) {
-          uniqueConversations[preview] = conv;
-        } else {
-          // Delete the duplicate conversation and its messages
-          await _deleteConversation(conv.id);
-        }
-      }
+     // Silently remove duplicate conversations with same title (keep oldest)
+// No confirmation dialog is shown
+final uniqueConversations = <String, ConversationHive>{};
+for (final conv in allConversations) {
+  final preview = _getConversationPreview(conv.id);
+  if (!uniqueConversations.containsKey(preview)) {
+    uniqueConversations[preview] = conv;
+  } else {
+    // Silent delete – no dialog
+    final messagesToDelete = _chatBox.values
+        .where((msg) => msg.conversationId == conv.id)
+        .toList();
+    for (final msg in messagesToDelete) {
+      await msg.delete();
+    }
+    await conv.delete();
+  }
+}
 
       final conversations =
           uniqueConversations.values.toList()..sort(
@@ -2067,13 +2074,27 @@ Current Year: $currentYear''';
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => _buildChatHistoryScreen(),
+        builder:
+            (context) => FutureBuilder(
+              future: _buildChatHistoryScreen(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Scaffold(
+                    backgroundColor: Colors.black,
+                    body: Center(
+                      child: CircularProgressIndicator(color: Colors.orange),
+                    ),
+                  );
+                }
+                return snapshot.data ?? const SizedBox.shrink();
+              },
+            ),
         fullscreenDialog: true,
       ),
     );
   }
 
-  Widget _buildChatHistoryScreen() {
+  Future<Widget> _buildChatHistoryScreen() async {
     final allConversations =
         _conversationBox.values
             .where((c) => c.modelUsed == _selectedModel)
@@ -2082,17 +2103,24 @@ Current Year: $currentYear''';
             (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
           );
 
-    // Remove duplicates with same title (keep oldest)
-    final uniqueConversations = <String, ConversationHive>{};
-    for (final conv in allConversations) {
-      final preview = _getConversationPreview(conv.id);
-      if (!uniqueConversations.containsKey(preview)) {
-        uniqueConversations[preview] = conv;
-      } else {
-        // Delete the duplicate conversation and its messages
-        _deleteConversation(conv.id);
-      }
+   // Silently remove duplicate conversations with same title (keep oldest)
+// No confirmation dialog is shown
+final uniqueConversations = <String, ConversationHive>{};
+for (final conv in allConversations) {
+  final preview = _getConversationPreview(conv.id);
+  if (!uniqueConversations.containsKey(preview)) {
+    uniqueConversations[preview] = conv;
+  } else {
+    // Silent delete – no dialog
+    final messagesToDelete = _chatBox.values
+        .where((msg) => msg.conversationId == conv.id)
+        .toList();
+    for (final msg in messagesToDelete) {
+      await msg.delete();
     }
+    await conv.delete();
+  }
+}
 
     final conversations =
         uniqueConversations.values.toList()..sort(
@@ -3925,16 +3953,20 @@ Current Year: $currentYear''';
                                 ],
                               ),
                             )
-                           : ListView.builder(
+                           : Scrollbar(
                               controller: _scrollController,
-                              physics:
-                                  const BouncingScrollPhysics(), // ADD THIS
-                              padding: const EdgeInsets.only(
-                                top: 4,
-                                bottom: 100,
-                                left: 2,
-                                right: 2,
-                              ),
+                              thumbVisibility: true,
+                              thickness: 6.0,
+                              radius: const Radius.circular(10),
+                              child: ListView.builder(
+                                controller: _scrollController,
+                                physics: const BouncingScrollPhysics(),
+                                padding: const EdgeInsets.only(
+                                  top: 4,
+                                  bottom: 100,
+                                  left: 2,
+                                  right: 2,
+                                ),
                               itemCount:
                                   _messages.length +
                                   (_currentStreamText.isNotEmpty ||
@@ -4070,7 +4102,7 @@ Current Year: $currentYear''';
                                 }
                               },
                             ),
-                  ),
+                  ),),
                   _buildBannerAd(),
                   if (_selectedImages.isNotEmpty)
                     Container(
