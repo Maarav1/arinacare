@@ -251,7 +251,6 @@ class _RadioScreenState extends State<RadioScreen> {
         color: Colors.green,
         bitrate: '640 kbps',
       ),
-    
     ]);
 
     // Set first station as current if nothing is playing
