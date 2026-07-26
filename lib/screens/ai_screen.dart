@@ -976,6 +976,11 @@ Current Year: $currentYear''';
   }) async* {
     final bool streamMode = _enableStreaming;
 
+// Slow down streaming on web so typing effect is visible
+if (kIsWeb && streamMode) {
+  await Future.delayed(const Duration(milliseconds: 35));
+}
+
     // Use proxy for ALL platforms (web AND mobile)
     // This keeps the API key secure on the server
     final String url =
@@ -3603,7 +3608,77 @@ for (final conv in allConversations) {
           ),
         ],
       ),
-      body: GestureDetector(
+      body: Row(
+  children: [
+    // ========== WEB ONLY LEFT SIDE ==========
+    if (kIsWeb)
+      Container(
+        width: 280,
+        color: Colors.grey.shade900,
+        child: Column(
+          children: [
+            const SizedBox(height: 20),
+            // Banner placeholder (ready for real AdSense later)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              height: 400,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blueAccent, width: 1),
+              ),
+              child: const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.ad_units, size: 50, color: Colors.blueAccent),
+                    SizedBox(height: 12),
+                    Text(
+                      "Ad Space (Web)",
+                      style: TextStyle(color: Colors.white70, fontSize: 16),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      "Ready for AdSense",
+                      style: TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Real Jumia Affiliate Button
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  // Paste your real Jumia affiliate link here later
+                },
+                icon: const Icon(Icons.shopping_bag, color: Colors.white),
+                label: const Text(
+                  "Shop on Jumia",
+                  style: TextStyle(color: Colors.white),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange.shade800,
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              "Support ArinaCave",
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    // ========== MAIN CHAT AREA ==========
+    Expanded(
+      child: GestureDetector(
         onTap: () {
           FocusScope.of(context).unfocus();
         },
@@ -3953,29 +4028,38 @@ for (final conv in allConversations) {
                                 ],
                               ),
                             )
-                           : Scrollbar(
-                              controller: _scrollController,
-                              thumbVisibility: true,
-                              thickness: 6.0,
-                              radius: const Radius.circular(10),
-                              child: ListView.builder(
-                                controller: _scrollController,
-                                physics: const BouncingScrollPhysics(),
-                                padding: const EdgeInsets.only(
-                                  top: 4,
-                                  bottom: 100,
-                                  left: 2,
-                                  right: 2,
-                                ),
-                              itemCount:
-                                  _messages.length +
-                                  (_currentStreamText.isNotEmpty ||
-                                          _isThinkingPhase ||
-                                          (_isStreaming &&
-                                              _messages.isNotEmpty) // ADD THIS
-                                      ? 1
-                                      : 0),
-                              itemBuilder: (context, index) {
+                           : Theme(
+  data: Theme.of(context).copyWith(
+    scrollbarTheme: ScrollbarThemeData(
+      thumbColor: WidgetStateProperty.all(Colors.blueAccent.withValues(alpha: 0.8)),
+      trackColor: WidgetStateProperty.all(Colors.blue.withValues(alpha: 0.15)),
+      thickness: WidgetStateProperty.all(5.0),
+      radius: const Radius.circular(8),
+      thumbVisibility: WidgetStateProperty.all(true),
+      trackVisibility: WidgetStateProperty.all(true),
+    ),
+  ),
+  child: Scrollbar(
+    controller: _scrollController,
+    interactive: true,
+    child: ListView.builder(
+      controller: _scrollController,
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.only(
+        top: 4,
+        bottom: 100,
+        left: 2,
+        right: 12,
+      ),
+      itemCount:
+          _messages.length +
+          (_currentStreamText.isNotEmpty ||
+                  _isThinkingPhase ||
+                  (_isStreaming &&
+                      _messages.isNotEmpty) // ADD THIS
+              ? 1
+              : 0),
+      itemBuilder: (context, index) {
                                 if (index < _messages.length) {
                                   return ChatBubbleWithThinking(
                                     message: _messages[index],
@@ -4097,12 +4181,14 @@ for (final conv in allConversations) {
                                       onRetryPressed: null,
                                       onCancelPressed:
                                           _cancelRetry, // ADD THIS LINE
-                                    );
+                                      );
+                                    }
                                   }
-                                }
-                              },
+                                },
                             ),
-                  ),),
+                          ),
+                        ),
+                      ),
                   _buildBannerAd(),
                   if (_selectedImages.isNotEmpty)
                     Container(
@@ -4296,11 +4382,11 @@ for (final conv in allConversations) {
                 ],
               ),
             ),
-            _buildScrollToBottomButton(),
+                        _buildScrollToBottomButton(),
           ],
         ),
       ),
-    );
+    )]));
   }
 
   Widget _buildWebView() {
