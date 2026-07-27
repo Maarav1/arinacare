@@ -304,14 +304,22 @@ class _AIScreenState extends State<AIScreen>
     _saveConversation();
   }
 
-  Future<void> _initializeHive() async {
+    Future<void> _initializeHive() async {
     try {
       _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
       _conversationBox = await Hive.openBox<ConversationHive>('conversations');
       _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
 
       await _loadUserProfile();
-      await _loadChatHistoryForModel(_selectedModel);
+
+      // Try to load the last conversation first
+      await _loadLastConversation();
+
+      // If no messages were loaded, try loading chat history (which will create a new empty conversation)
+      if (_messages.isEmpty) {
+        await _loadChatHistoryForModel(_selectedModel);
+      }
+
       await _cleanOldConversations();
 
       if (mounted) {
@@ -492,7 +500,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-  Future<void> _changeModel(String newModel) async {
+    Future<void> _changeModel(String newModel) async {
     await _saveConversation();
     await _cancelCurrentStream();
 
@@ -515,7 +523,13 @@ class _AIScreenState extends State<AIScreen>
       _activeConversationId = null;
     });
 
-    await _loadChatHistoryForModel(newModel);
+    // Try to load last conversation for new model
+    await _loadLastConversation();
+
+    // If no messages, try loading chat history
+    if (_messages.isEmpty) {
+      await _loadChatHistoryForModel(newModel);
+    }
 
     if (!mounted) return;
 
@@ -726,6 +740,92 @@ for (final conv in allConversations) {
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error loading chat history for model $modelId: $e');
+      }
+    }
+  }
+
+    Future<void> _loadLastConversation() async {
+    if (!_enableHistory) return;
+    if (_isHiveLoading) return;
+
+    try {
+      // Get all conversations for current model, sorted by most recent
+      final allConversations =
+          _conversationBox.values
+              .where((conv) => conv.modelUsed == _selectedModel)
+              .toList()
+            ..sort(
+              (a, b) =>
+                  b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
+            );
+
+      if (allConversations.isEmpty) {
+        if (kDebugMode) {
+          print('📭 No conversations found for model: $_selectedModel');
+        }
+        return;
+      }
+
+      // Get the most recent conversation
+      final latestConversation = allConversations.first;
+
+      // Load its messages
+      final messages =
+          _chatBox.values
+              .where((msg) => msg.conversationId == latestConversation.id)
+              .toList()
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      if (messages.isEmpty) {
+        if (kDebugMode) {
+          print('📭 No messages in latest conversation');
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _messages.clear();
+          _messages.addAll(
+            messages.map(
+              (msg) => ChatMessage(
+                text: msg.text,
+                isUser: msg.isUser,
+                timestamp: msg.timestamp,
+                isLoading: false,
+                isError: msg.isError,
+                thinkingProcess: msg.thinkingProcess,
+                thinkingTime:
+                    msg.thinkingTimeMs != null
+                        ? Duration(milliseconds: msg.thinkingTimeMs!)
+                        : null,
+                images: msg.imageBytes,
+                isIncomplete: msg.isIncomplete ?? false,
+              ),
+            ),
+          );
+          _activeConversationId = latestConversation.id;
+          _forceNewConversation = false;
+        });
+
+        if (kDebugMode) {
+          print(
+            '✅ Auto-loaded ${messages.length} messages from latest conversation',
+          );
+        }
+
+        // Scroll to bottom after loading
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _scrollController.hasClients) {
+            _scrollController.jumpTo(
+              _scrollController.position.maxScrollExtent,
+            );
+          }
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Error loading last conversation: $e');
       }
     }
   }
@@ -3654,709 +3754,733 @@ for (final conv in allConversations) {
               onTap: () => FocusScope.of(context).unfocus(),
               child: Stack(
                 children: [
-            _webCentered(
-              Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 6,
-                      horizontal: 12,
-                    ),
-                    color: Colors.grey.shade900,
-                    child: Row(
+                  _webCentered(
+                    Column(
                       children: [
                         Container(
+                          width: double.infinity,
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
+                            vertical: 6,
+                            horizontal: 12,
                           ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withAlpha(20),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange, width: 1),
-                          ),
+                          color: Colors.grey.shade900,
                           child: Row(
-                            children: [
-                              const Icon(
-                                Icons.model_training,
-                                size: 12,
-                                color: Colors.blueAccent,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _availableModels
-                                    .firstWhere((m) => m.id == _selectedModel)
-                                    .name,
-                                style: const TextStyle(
-                                  color: Colors.orange,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _enableThinking = !_enableThinking;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  _enableThinking
-                                      ? '🤔 Thinking mode ON - Thoughts hidden in dropdown'
-                                      : '⚡ Fast mode ON - All text shown directly',
-                                ),
-                                backgroundColor:
-                                    _enableThinking
-                                        ? Colors.blueGrey
-                                        : Colors.blue,
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color:
-                                  _enableThinking
-                                      ? Colors.brown.withAlpha(20)
-                                      : Colors.blue.withAlpha(20),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color:
-                                    _enableThinking
-                                        ? Colors.lightBlue
-                                        : Colors.blue,
-                                width: 1,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _enableThinking
-                                      ? Icons.psychology
-                                      : Icons.flash_on,
-                                  size: 10,
-                                  color:
-                                      _enableThinking
-                                          ? Colors.deepOrangeAccent
-                                          : Colors.blue,
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  _enableThinking ? 'Thinking' : 'Fast',
-                                  style: TextStyle(
-                                    color:
-                                        _enableThinking
-                                            ? Colors.deepOrange
-                                            : Colors.blue,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withAlpha(20),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.blue, width: 1),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.thermostat,
-                                size: 10,
-                                color: Colors.blue,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                'Temp: ${_temperature.toStringAsFixed(1)}',
-                                style: const TextStyle(
-                                  color: Colors.blue,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withAlpha(20),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.green, width: 1),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.memory,
-                                size: 10,
-                                color: Colors.green,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                'Ctx: $_maxContextMessages',
-                                style: const TextStyle(
-                                  color: Colors.green,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: _openChatHistory,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.purple.withAlpha(20),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.purpleAccent,
-                                width: 1,
-                              ),
-                            ),
-                            child: const Row(
-                              children: [
-                                Icon(
-                                  Icons.history,
-                                  size: 10,
-                                  color: Colors.purpleAccent,
-                                ),
-                                SizedBox(width: 3),
-                                Text(
-                                  'History',
-                                  style: TextStyle(
-                                    color: Colors.purpleAccent,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-
-                        const Spacer(),
-
-                        if (_enableStreaming)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color:
-                                  _isStreaming
-                                      ? Colors.green.withAlpha(20)
-                                      : Colors.grey.withAlpha(20),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color:
-                                    _isStreaming ? Colors.green : Colors.grey,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _isStreaming
-                                      ? Icons.stream
-                                      : Icons.check_circle,
-                                  size: 10,
-                                  color:
-                                      _isStreaming ? Colors.green : Colors.grey,
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  _isStreaming ? 'Streaming' : 'Ready',
-                                  style: TextStyle(
-                                    color:
-                                        _isStreaming
-                                            ? Colors.green
-                                            : Colors.grey,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-
-                  Expanded(
-                    child:
-                        _messages.isEmpty && _currentStreamText.isEmpty
-                            ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(
-                                    Icons.auto_awesome,
-                                    size: 64,
-                                    color: Colors.orange,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Welcome to ${_availableModels.firstWhere((m) => m.id == _selectedModel).name}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
-                                    style: const TextStyle(
-                                      color: Colors.green,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: ${_enableStreaming ? "Enabled" : "Disabled"}',
-                                    style: const TextStyle(
-                                      color: Colors.blue,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  if (_userProfileBox.values.isEmpty)
-                                    GestureDetector(
-                                      onTap: _showProfileDialog,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 8,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green.withAlpha(30),
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.green,
-                                          ),
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.person_add,
-                                              color: Colors.green,
-                                              size: 16,
-                                            ),
-                                            SizedBox(width: 8),
-                                            Text(
-                                              'Set up your profile',
-                                              style: TextStyle(
-                                                color: Colors.green,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                            SizedBox(width: 8),
-                                            Icon(
-                                              Icons.arrow_forward,
-                                              color: Colors.green,
-                                              size: 12,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            )
-                           : Theme(
-  data: Theme.of(context).copyWith(
-    scrollbarTheme: ScrollbarThemeData(
-      thumbColor: WidgetStateProperty.all(Colors.blueAccent.withValues(alpha: 0.8)),
-      trackColor: WidgetStateProperty.all(Colors.blue.withValues(alpha: 0.15)),
-      thickness: WidgetStateProperty.all(5.0),
-      radius: const Radius.circular(8),
-      thumbVisibility: WidgetStateProperty.all(true),
-      trackVisibility: WidgetStateProperty.all(true),
-    ),
-  ),
-  child: Scrollbar(
-    controller: _scrollController,
-    interactive: true,
-    child: ListView.builder(
-      controller: _scrollController,
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.only(
-                                          top: 4,
-                                          bottom: 100,
-                                          left: 2,
-                                          right: 2,
-                                        ),
-      itemCount:
-          _messages.length +
-          (_currentStreamText.isNotEmpty ||
-                  _isThinkingPhase ||
-                  (_isStreaming &&
-                      _messages.isNotEmpty) // ADD THIS
-              ? 1
-              : 0),
-      itemBuilder: (context, index) {
-                                if (index < _messages.length) {
-                                  return ChatBubbleWithThinking(
-                                    message: _messages[index],
-                                    enableAutoScroll: _enableAutoScroll,
-                                    onContinuePressed:
-                                        _messages[index].isIncomplete
-                                            ? _continueIncompleteResponse
-                                            : null,
-                                    onRetryPressed:
-                                        _messages[index].canRetry
-                                            ? _retryFailedRequest
-                                            : null,
-                                    onCancelPressed:
-                                        _cancelRetry, // ADD THIS LINE
-                                  );
-                                } else {
-                                  if (_isThinkingPhase && _enableThinking) {
-                                    final phaseLabel = _thinkingPhaseLabel(
-                                      _currentThinkingProcess,
-                                    );
-                                    return Container(
-                                      margin: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                        horizontal: 4,
-                                      ),
-                                      padding: const EdgeInsets.all(14),
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade900,
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: Colors.purpleAccent.withAlpha(
-                                            60,
-                                          ),
-                                          width: 1,
-                                        ),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              const Icon(
-                                                Icons.psychology,
-                                                color: Colors.purpleAccent,
-                                                size: 18,
-                                              ),
-                                              const SizedBox(width: 10),
-                                              const Text(
-                                                'Thinking...',
-                                                style: TextStyle(
-                                                  color: Colors.purpleAccent,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              const SizedBox(
-                                                width: 14,
-                                                height: 14,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  valueColor:
-                                                      AlwaysStoppedAnimation<
-                                                        Color
-                                                      >(Colors.purpleAccent),
-                                                ),
-                                              ),
-                                              const Spacer(),
-                                              Text(
-                                                phaseLabel,
-                                                style: const TextStyle(
-                                                  color: Colors.grey,
-                                                  fontSize: 11,
-                                                  fontStyle: FontStyle.italic,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          if (_currentThinkingProcess
-                                              .isNotEmpty)
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                top: 10,
-                                              ),
-                                              child: Container(
-                                                padding: const EdgeInsets.all(
-                                                  12,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                child: Text(
-                                                  _currentThinkingProcess,
-                                                  style: const TextStyle(
-                                                    color:
-                                                        Colors.lightGreenAccent,
-                                                    fontSize: 13,
-                                                    height: 1.4,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    );
-                                  } else {
-                                    return ChatBubbleWithThinking(
-                                      message: ChatMessage(
-                                        text: _currentStreamText,
-                                        isUser: false,
-                                        timestamp: DateTime.now(),
-                                        isLoading: _isStreaming,
-                                      ),
-                                      enableAutoScroll: _enableAutoScroll,
-                                      onContinuePressed: null,
-                                      onRetryPressed: null,
-                                      onCancelPressed:
-                                          _cancelRetry, // ADD THIS LINE
-                                      );
-                                    }
-                                  }
-                                },
-                            ),
-                          ),
-                        ),
-                      ),
-                  _buildBannerAd(),
-                  if (_selectedImages.isNotEmpty)
-                    Container(
-                      height: 80,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      color: Colors.grey.shade900,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _selectedImages.length,
-                        itemBuilder: (context, index) {
-                          return Stack(
                             children: [
                               Container(
-                                width: 70,
-                                height: 70,
-                                margin: const EdgeInsets.only(right: 6),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
                                 decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(6),
-                                  image: DecorationImage(
-                                    image: MemoryImage(_selectedImages[index]),
-                                    fit: BoxFit.cover,
+                                  color: Colors.blue.withAlpha(20),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.orange,
+                                    width: 1,
                                   ),
                                 ),
-                              ),
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: GestureDetector(
-                                  onTap: () => _removeImage(index),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(2),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.close,
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.model_training,
                                       size: 12,
-                                      color: Colors.white,
+                                      color: Colors.blueAccent,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _availableModels
+                                          .firstWhere(
+                                            (m) => m.id == _selectedModel,
+                                          )
+                                          .name,
+                                      style: const TextStyle(
+                                        color: Colors.orange,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+
+                              GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _enableThinking = !_enableThinking;
+                                  });
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        _enableThinking
+                                            ? '🤔 Thinking mode ON - Thoughts hidden in dropdown'
+                                            : '⚡ Fast mode ON - All text shown directly',
+                                      ),
+                                      backgroundColor:
+                                          _enableThinking
+                                              ? Colors.blueGrey
+                                              : Colors.blue,
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        _enableThinking
+                                            ? Colors.brown.withAlpha(20)
+                                            : Colors.blue.withAlpha(20),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color:
+                                          _enableThinking
+                                              ? Colors.lightBlue
+                                              : Colors.blue,
+                                      width: 1,
                                     ),
                                   ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-
-                  Container(
-                    padding: const EdgeInsets.all(7),
-                    color: Colors.grey.shade900,
-                    child: Column(
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (_enableImageUpload)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: IconButton(
-                                  icon: Icon(
-                                    Icons.image,
-                                    color:
-                                        _selectedImages.isNotEmpty
-                                            ? Colors.orange
-                                            : Colors.white,
-                                    size: 20,
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _enableThinking
+                                            ? Icons.psychology
+                                            : Icons.flash_on,
+                                        size: 10,
+                                        color:
+                                            _enableThinking
+                                                ? Colors.deepOrangeAccent
+                                                : Colors.blue,
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        _enableThinking ? 'Thinking' : 'Fast',
+                                        style: TextStyle(
+                                          color:
+                                              _enableThinking
+                                                  ? Colors.deepOrange
+                                                  : Colors.blue,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  onPressed: () async {
-                                    await _pickImage();
-                                    if (_inputFocusNode?.hasFocus == false) {
-                                      _inputFocusNode?.requestFocus();
-                                    }
-                                  },
                                 ),
                               ),
+                              const SizedBox(width: 6),
 
-                            Expanded(
-                              child: Container(
-                                constraints: const BoxConstraints(
-                                  maxHeight: 140,
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.grey.shade800,
-                                  borderRadius: BorderRadius.circular(20),
+                                  color: Colors.blue.withAlpha(20),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.blue,
+                                    width: 1,
+                                  ),
                                 ),
-                                child: TextField(
-                                  controller: _messageController,
-                                  focusNode: _inputFocusNode,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                  ),
-                                  maxLines: null,
-                                  keyboardType: TextInputType.multiline,
-                                  textInputAction: TextInputAction.newline,
-                                  decoration: InputDecoration(
-                                    hintText: 'Type your message...',
-                                    hintStyle: const TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 14,
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.thermostat,
+                                      size: 10,
+                                      color: Colors.blue,
                                     ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      'Temp: ${_temperature.toStringAsFixed(1)}',
+                                      style: const TextStyle(
+                                        color: Colors.blue,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                    suffixIcon:
-                                        _isStreaming
-                                            ? IconButton(
-                                              icon: const Icon(
-                                                Icons.stop,
-                                                color: Colors.red,
-                                                size: 18,
-                                              ),
-                                              onPressed: () {
-                                                _stopGenerating();
-                                              },
-                                            )
-                                            : null,
-                                  ),
-                                  onChanged: (value) {},
-                                  onSubmitted: (_) {
-                                    if (!_isSendingMessage) {
-                                      _sendGeminiMessage();
-                                    }
-                                  },
+                                  ],
                                 ),
                               ),
-                            ),
 
-                            const SizedBox(width: 6),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withAlpha(20),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.green,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.memory,
+                                      size: 10,
+                                      color: Colors.green,
+                                    ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      'Ctx: $_maxContextMessages',
+                                      style: const TextStyle(
+                                        color: Colors.green,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
 
-                            ValueListenableBuilder<bool>(
-                              valueListenable: _hasTextOrImages,
-                              builder: (context, hasContent, child) {
-                                return ValueListenableBuilder<bool>(
-                                  valueListenable: _isSendingNotifier,
-                                  builder: (context, isSending, child) {
-                                    return Container(
-                                      margin: const EdgeInsets.only(bottom: 6),
-                                      decoration: BoxDecoration(
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                onTap: _openChatHistory,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.purple.withAlpha(20),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.purpleAccent,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      Icon(
+                                        Icons.history,
+                                        size: 10,
+                                        color: Colors.purpleAccent,
+                                      ),
+                                      SizedBox(width: 3),
+                                      Text(
+                                        'History',
+                                        style: TextStyle(
+                                          color: Colors.purpleAccent,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+
+                              const Spacer(),
+
+                              if (_enableStreaming)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        _isStreaming
+                                            ? Colors.green.withAlpha(20)
+                                            : Colors.grey.withAlpha(20),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color:
+                                          _isStreaming
+                                              ? Colors.green
+                                              : Colors.grey,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _isStreaming
+                                            ? Icons.stream
+                                            : Icons.check_circle,
+                                        size: 10,
                                         color:
-                                            isSending || !hasContent
-                                                ? Colors.grey.shade700
-                                                : Colors.lightBlue,
-                                        shape: BoxShape.circle,
+                                            _isStreaming
+                                                ? Colors.green
+                                                : Colors.grey,
                                       ),
-                                      child: IconButton(
-                                        icon:
-                                            isSending
-                                                ? const SizedBox(
-                                                  width: 18,
-                                                  height: 18,
-                                                  child: CircularProgressIndicator(
-                                                    strokeWidth: 2,
-                                                    valueColor:
-                                                        AlwaysStoppedAnimation<
-                                                          Color
-                                                        >(Colors.white),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        _isStreaming ? 'Streaming' : 'Ready',
+                                        style: TextStyle(
+                                          color:
+                                              _isStreaming
+                                                  ? Colors.green
+                                                  : Colors.grey,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+
+                        Expanded(
+                          child:
+                              _messages.isEmpty && _currentStreamText.isEmpty
+                                  ? Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        const Icon(
+                                          Icons.auto_awesome,
+                                          size: 64,
+                                          color: Colors.orange,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Welcome to ${_availableModels.firstWhere((m) => m.id == _selectedModel).name}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Smart Context: ${_enableSmartContext ? "ON" : "OFF"} | Window: $_maxContextMessages msgs',
+                                          style: const TextStyle(
+                                            color: Colors.green,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Temperature: ${_temperature.toStringAsFixed(1)} | Streaming: ${_enableStreaming ? "Enabled" : "Disabled"}',
+                                          style: const TextStyle(
+                                            color: Colors.blue,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        if (_userProfileBox.values.isEmpty)
+                                          GestureDetector(
+                                            onTap: _showProfileDialog,
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                    vertical: 8,
                                                   ),
-                                                )
-                                                : const Icon(
-                                                  Icons.send,
-                                                  color: Colors.white,
-                                                  size: 20,
+                                              decoration: BoxDecoration(
+                                                color: Colors.green.withAlpha(
+                                                  30,
                                                 ),
-                                        onPressed: () async {
-                                          if (!isSending && hasContent) {
-                                            if (!kIsWeb) {
-                                              HapticFeedback.lightImpact(); // ADD HAPTIC
-                                            }
-                                            await _sendGeminiMessage();
-                                          }
-                                        },
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                                border: Border.all(
+                                                  color: Colors.green,
+                                                ),
+                                              ),
+                                              child: const Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.person_add,
+                                                    color: Colors.green,
+                                                    size: 16,
+                                                  ),
+                                                  SizedBox(width: 8),
+                                                  Text(
+                                                    'Set up your profile',
+                                                    style: TextStyle(
+                                                      color: Colors.green,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                  SizedBox(width: 8),
+                                                  Icon(
+                                                    Icons.arrow_forward,
+                                                    color: Colors.green,
+                                                    size: 12,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  )
+                                  : ListView.builder(
+                                    controller: _scrollController,
+                                    physics: const BouncingScrollPhysics(),
+                                    padding: const EdgeInsets.only(
+                                      top: 4,
+                                      bottom: 100,
+                                      left: 2,
+                                      right: 2,
+                                    ),
+                                    itemCount:
+                                        _messages.length +
+                                        (_currentStreamText.isNotEmpty ||
+                                                _isThinkingPhase ||
+                                                (_isStreaming &&
+                                                    _messages.isNotEmpty)
+                                            ? 1
+                                            : 0),
+                                    itemBuilder: (context, index) {
+                                      if (index < _messages.length) {
+                                        return ChatBubbleWithThinking(
+                                          message: _messages[index],
+                                          enableAutoScroll: _enableAutoScroll,
+                                          onContinuePressed:
+                                              _messages[index].isIncomplete
+                                                  ? _continueIncompleteResponse
+                                                  : null,
+                                          onRetryPressed:
+                                              _messages[index].canRetry
+                                                  ? _retryFailedRequest
+                                                  : null,
+                                          onCancelPressed: _cancelRetry,
+                                        );
+                                      } else {
+                                        if (_isThinkingPhase &&
+                                            _enableThinking) {
+                                          final phaseLabel =
+                                              _thinkingPhaseLabel(
+                                                _currentThinkingProcess,
+                                              );
+                                          return Container(
+                                            margin: const EdgeInsets.symmetric(
+                                              vertical: 8,
+                                              horizontal: 4,
+                                            ),
+                                            padding: const EdgeInsets.all(14),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey.shade900,
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              border: Border.all(
+                                                color: Colors.purpleAccent
+                                                    .withAlpha(60),
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    const Icon(
+                                                      Icons.psychology,
+                                                      color:
+                                                          Colors.purpleAccent,
+                                                      size: 18,
+                                                    ),
+                                                    const SizedBox(width: 10),
+                                                    const Text(
+                                                      'Thinking...',
+                                                      style: TextStyle(
+                                                        color:
+                                                            Colors.purpleAccent,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 14,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    const SizedBox(
+                                                      width: 14,
+                                                      height: 14,
+                                                      child: CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        valueColor:
+                                                            AlwaysStoppedAnimation<
+                                                              Color
+                                                            >(
+                                                              Colors
+                                                                  .purpleAccent,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                    const Spacer(),
+                                                    Text(
+                                                      phaseLabel,
+                                                      style: const TextStyle(
+                                                        color: Colors.grey,
+                                                        fontSize: 11,
+                                                        fontStyle:
+                                                            FontStyle.italic,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                if (_currentThinkingProcess
+                                                    .isNotEmpty)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          top: 10,
+                                                        ),
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                            12,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.black,
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              8,
+                                                            ),
+                                                      ),
+                                                      child: Text(
+                                                        _currentThinkingProcess,
+                                                        style: const TextStyle(
+                                                          color:
+                                                              Colors
+                                                                  .lightGreenAccent,
+                                                          fontSize: 13,
+                                                          height: 1.4,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          );
+                                        } else {
+                                          return ChatBubbleWithThinking(
+                                            message: ChatMessage(
+                                              text: _currentStreamText,
+                                              isUser: false,
+                                              timestamp: DateTime.now(),
+                                              isLoading: _isStreaming,
+                                            ),
+                                            enableAutoScroll: _enableAutoScroll,
+                                            onContinuePressed: null,
+                                            onRetryPressed: null,
+                                            onCancelPressed: _cancelRetry,
+                                          );
+                                        }
+                                      }
+                                    },
+                                  ),
+                        ),
+                        _buildBannerAd(),
+                        if (_selectedImages.isNotEmpty)
+                          Container(
+                            height: 80,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            color: Colors.grey.shade900,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: _selectedImages.length,
+                              itemBuilder: (context, index) {
+                                return Stack(
+                                  children: [
+                                    Container(
+                                      width: 70,
+                                      height: 70,
+                                      margin: const EdgeInsets.only(right: 6),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(6),
+                                        image: DecorationImage(
+                                          image: MemoryImage(
+                                            _selectedImages[index],
+                                          ),
+                                          fit: BoxFit.cover,
+                                        ),
                                       ),
-                                    );
-                                  },
+                                    ),
+                                    Positioned(
+                                      top: 0,
+                                      right: 0,
+                                      child: GestureDetector(
+                                        onTap: () => _removeImage(index),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(2),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.red,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.close,
+                                            size: 12,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 );
                               },
                             ),
-                          ],
+                          ),
+
+                        Container(
+                          padding: const EdgeInsets.all(7),
+                          color: Colors.grey.shade900,
+                          child: Column(
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  if (_enableImageUpload)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 6),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.image,
+                                          color:
+                                              _selectedImages.isNotEmpty
+                                                  ? Colors.orange
+                                                  : Colors.white,
+                                          size: 20,
+                                        ),
+                                        onPressed: () async {
+                                          await _pickImage();
+                                          if (_inputFocusNode?.hasFocus ==
+                                              false) {
+                                            _inputFocusNode?.requestFocus();
+                                          }
+                                        },
+                                      ),
+                                    ),
+
+                                  Expanded(
+                                    child: Container(
+                                      constraints: const BoxConstraints(
+                                        maxHeight: 140,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade800,
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: TextField(
+                                        controller: _messageController,
+                                        focusNode: _inputFocusNode,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                        ),
+                                        maxLines: null,
+                                        keyboardType: TextInputType.multiline,
+                                        textInputAction:
+                                            TextInputAction.newline,
+                                        decoration: InputDecoration(
+                                          hintText: 'Type your message...',
+                                          hintStyle: const TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 14,
+                                          ),
+                                          border: InputBorder.none,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                horizontal: 14,
+                                                vertical: 10,
+                                              ),
+                                          suffixIcon:
+                                              _isStreaming
+                                                  ? IconButton(
+                                                    icon: const Icon(
+                                                      Icons.stop,
+                                                      color: Colors.red,
+                                                      size: 18,
+                                                    ),
+                                                    onPressed: () {
+                                                      _stopGenerating();
+                                                    },
+                                                  )
+                                                  : null,
+                                        ),
+                                        onChanged: (value) {},
+                                        onSubmitted: (_) {
+                                          if (!_isSendingMessage) {
+                                            _sendGeminiMessage();
+                                          }
+                                        },
+                                      ),
+                                    ),
+                                  ),
+
+                                  const SizedBox(width: 6),
+
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable: _hasTextOrImages,
+                                    builder: (context, hasContent, child) {
+                                      return ValueListenableBuilder<bool>(
+                                        valueListenable: _isSendingNotifier,
+                                        builder: (context, isSending, child) {
+                                          return Container(
+                                            margin: const EdgeInsets.only(
+                                              bottom: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  isSending || !hasContent
+                                                      ? Colors.grey.shade700
+                                                      : Colors.lightBlue,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: IconButton(
+                                              icon:
+                                                  isSending
+                                                      ? const SizedBox(
+                                                        width: 18,
+                                                        height: 18,
+                                                        child: CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                          valueColor:
+                                                              AlwaysStoppedAnimation<
+                                                                Color
+                                                              >(Colors.white),
+                                                        ),
+                                                      )
+                                                      : const Icon(
+                                                        Icons.send,
+                                                        color: Colors.white,
+                                                        size: 20,
+                                                      ),
+                                              onPressed: () async {
+                                                if (!isSending && hasContent) {
+                                                  if (!kIsWeb) {
+                                                    HapticFeedback.lightImpact();
+                                                  }
+                                                  await _sendGeminiMessage();
+                                                }
+                                              },
+                                            ),
+                                          );
+                                        },
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   ),
+                  _buildScrollToBottomButton(),
                 ],
               ),
             ),
-                        _buildScrollToBottomButton(),
-          ],
-        ),
+          ),
+        ],
       ),
-    )]));
+    );
   }
 
   Widget _buildWebView() {
