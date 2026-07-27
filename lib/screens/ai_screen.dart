@@ -7,7 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-
+import 'package:flutter_adsense/flutter_adsense.dart';
 //import 'package:webview_flutter_web/webview_flutter_web.dart';
 
 import 'package:http/http.dart' as http;
@@ -3609,81 +3609,51 @@ for (final conv in allConversations) {
         ],
       ),
       body: Row(
-  children: [
-    // ========== WEB ONLY LEFT SIDE ==========
-    if (kIsWeb)
-      Container(
-        width: 280,
-        color: Colors.grey.shade900,
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            // Banner placeholder (ready for real AdSense later)
+        children: [
+          if (kIsWeb)
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 12),
-              height: 400,
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blueAccent, width: 1),
-              ),
-              child: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.ad_units, size: 50, color: Colors.blueAccent),
-                    SizedBox(height: 12),
-                    Text(
-                      "Ad Space (Web)",
-                      style: TextStyle(color: Colors.white70, fontSize: 16),
+              width: 280,
+              color: Colors.grey.shade900,
+              child: Column(
+                children: [
+                  const SizedBox(height: 24),
+
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 12),
+                    height: 250,
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.blueAccent.withValues(alpha: 0.4),
+                      ),
                     ),
-                    SizedBox(height: 6),
-                    Text(
-                      "Ready for AdSense",
-                      style: TextStyle(color: Colors.white38, fontSize: 12),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: const AdsenseWidget(
+                        adClient: 'ca-pub-1472609237394607',
+                        adSlot: '1318293971',
+                        adFormat: 'auto',
+                        fullWidthResponsive: true,
+                        width: 280,
+                        height: 250,
+                      ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            // Real Jumia Affiliate Button
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  // Paste your real Jumia affiliate link here later
-                },
-                icon: const Icon(Icons.shopping_bag, color: Colors.white),
-                label: const Text(
-                  "Shop on Jumia",
-                  style: TextStyle(color: Colors.white),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange.shade800,
-                  minimumSize: const Size(double.infinity, 48),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
                   ),
-                ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "Support ArinaCave",
+                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            const Text(
-              "Support ArinaCave",
-              style: TextStyle(color: Colors.white54, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    // ========== MAIN CHAT AREA ==========
-    Expanded(
-      child: GestureDetector(
-        onTap: () {
-          FocusScope.of(context).unfocus();
-        },
-        child: Stack(
-          children: [
+          // ========== MAIN CHAT AREA ==========
+          Expanded(
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              child: Stack(
+                children: [
             _webCentered(
               Column(
                 children: [
@@ -4046,11 +4016,11 @@ for (final conv in allConversations) {
       controller: _scrollController,
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.only(
-        top: 4,
-        bottom: 100,
-        left: 2,
-        right: 12,
-      ),
+                                          top: 4,
+                                          bottom: 100,
+                                          left: 2,
+                                          right: 2,
+                                        ),
       itemCount:
           _messages.length +
           (_currentStreamText.isNotEmpty ||

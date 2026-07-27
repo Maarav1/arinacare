@@ -891,6 +891,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_adsense:
+    dependency: "direct main"
+    description:
+      name: flutter_adsense
+      sha256: a2b88bb8909b8a2c13f9a96405889c4a9a2db9e41400642b3d33d4806206b35f
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.0"
   flutter_bloc:
     dependency: "direct main"
     description:

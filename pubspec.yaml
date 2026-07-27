@@ -112,6 +112,7 @@ dependencies:
   # ===== PAYMENTS =====
   google_mobile_ads: ^6.0.0
   in_app_purchase: ^3.2.3 
+  flutter_adsense: ^1.0.0
 
   # ===== LINKS =====
   app_links: ^6.4.1

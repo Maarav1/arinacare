@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:arina_cave/router/app_router.dart';
-
+import 'package:flutter_adsense/flutter_adsense.dart';
 import 'package:arina_cave/services/ad_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -13,10 +13,9 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'firebase_options.dart'; // ✅ ADD THIS IMPORT
+import 'firebase_options.dart';
 import 'screens/hive_models.dart';
 
-// REMOVED: Old browser imports
 // ================== GLOBAL STREAMS ==================
 final StreamController<Map<String, String>> deepLinkController =
     StreamController<Map<String, String>>.broadcast();
@@ -35,7 +34,6 @@ Future<void> main() async {
       }
 
       // Initialize core services (PARALLEL FOR SPEED)
-      // 1. Load critical config firs
       // 1. Load critical config first (mobile only — web uses build-time secrets)
       if (!kIsWeb) {
         try {
@@ -46,16 +44,23 @@ Future<void> main() async {
       }
 
       // 2. Now initialize services that DEPEND on dotenv
-      // ===== WEB COMPATIBILITY: Only initializ MobileAds on mobile =====
-      // Google Mobile Ads doesn't work on web, so skip it
+      // ===== WEB COMPATIBILITY: Only initialize MobileAds on mobile =====
       if (!kIsWeb) {
         await MobileAds.instance.initialize();
+      }
+
+      // Initialize AdSense for web ONLY
+      if (kIsWeb) {
+        FlutterAdsense().initialize('ca-pub-1472609237394607');
+        if (kDebugMode) {
+          print('✅ AdSense initialized for web');
+        }
       }
 
       // ✅ Initialize Hive with adapters FIRST
       await _initializeHiveWithAdapters();
 
-      // ✅ Then initialize Firebase (comment out GeminiService if not needed)
+      // ✅ Then initialize Firebase
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
@@ -72,7 +77,7 @@ Future<void> main() async {
         });
       }
 
-      // ===== WEB COMPATIBILITY: Setup error reporting =====
+      // ===== Setup error reporting =====
       // Skip Crashlytics on web if not configured
       if (!kIsWeb) {
         // Setup error reporting
@@ -213,9 +218,7 @@ void _initDeepLinks() {
   );
 }
 
-// Handle browser-specific deep links
 void _handleBrowserDeepLink(Uri uri) {
-  // Add to stream for browser navigation
   deepLinkController.add({
     'type': 'browser',
     'url': uri.toString(),
@@ -226,22 +229,16 @@ void _handleBrowserDeepLink(Uri uri) {
 void _handleDeepLink(Uri? uri) {
   if (uri == null) return;
 
-  // Handle browser URLs (http/https)
   if (uri.scheme.startsWith('http')) {
     _handleBrowserDeepLink(uri);
     return;
   }
 
-  // Handle custom scheme: arina://cave/post/123
   if (uri.scheme == 'arina' && uri.host == 'cave') {
     _handleCustomScheme(uri);
-  }
-  // Handle GitHub Pages
-  else if (uri.scheme == 'https' && uri.host == 'maarav1.github.io') {
+  } else if (uri.scheme == 'https' && uri.host == 'maarav1.github.io') {
     _handleGitHubPagesLink(uri);
-  }
-  // Handle hash parameters
-  else if (uri.scheme == 'https' &&
+  } else if (uri.scheme == 'https' &&
       uri.host == 'maarav1.github.io' &&
       uri.fragment.isNotEmpty) {
     _handleHashParameters(uri);
@@ -344,7 +341,6 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    // Listen for deep links
     _deepLinkSubscription = deepLinkController.stream.listen(
       _navigateFromDeepLink,
       onError: (error) {
@@ -352,7 +348,6 @@ class _MyAppState extends State<MyApp> {
       },
     );
 
-    // Handle initial deep link
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_initialLinkHandled && _initialDeepLink != null) {
         _handleDeepLink(_initialDeepLink);
@@ -364,7 +359,6 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     _deepLinkSubscription?.cancel();
-    // Web compatibility: Only dispose AdService if not on web
     if (!kIsWeb) {
       AdService.instance.stopIntervalTimer();
       AdService.instance.dispose();
@@ -403,7 +397,6 @@ class _MyAppState extends State<MyApp> {
           GoRouter.of(context).push('/user/$id');
           break;
         case 'browser':
-          // Navigate to browser with URL
           if (url != null && url.isNotEmpty) {
             GoRouter.of(
               context,

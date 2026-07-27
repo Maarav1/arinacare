@@ -59,6 +59,11 @@
             android:name="applovin.sdk.key"
             android:value="temp_key_until_approval" />
 
+            <!-- Bypass APPLICATION_ID check for WebView API for Ads -->
+<meta-data
+    android:name="com.google.android.gms.ads.INTEGRATION_MANAGER"
+    android:value="webview"/>
+
         <!-- Google Mobile Ads -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
