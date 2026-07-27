@@ -47,5 +47,8 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<!-- Bypass GADApplicationIdentifier check for WebView API for Ads -->
+<key>GADIntegrationManager</key>
+<string>webview</string>
 	</dict>
 </plist>
