@@ -304,22 +304,14 @@ class _AIScreenState extends State<AIScreen>
     _saveConversation();
   }
 
-    Future<void> _initializeHive() async {
+     Future<void> _initializeHive() async {
     try {
       _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
       _conversationBox = await Hive.openBox<ConversationHive>('conversations');
       _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
 
       await _loadUserProfile();
-
-      // Try to load the last conversation first
-      await _loadLastConversation();
-
-      // If no messages were loaded, try loading chat history (which will create a new empty conversation)
-      if (_messages.isEmpty) {
-        await _loadChatHistoryForModel(_selectedModel);
-      }
-
+      await _loadChatHistoryForModel(_selectedModel);
       await _cleanOldConversations();
 
       if (mounted) {
@@ -500,7 +492,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-    Future<void> _changeModel(String newModel) async {
+      Future<void> _changeModel(String newModel) async {
     await _saveConversation();
     await _cancelCurrentStream();
 
@@ -523,13 +515,7 @@ class _AIScreenState extends State<AIScreen>
       _activeConversationId = null;
     });
 
-    // Try to load last conversation for new model
-    await _loadLastConversation();
-
-    // If no messages, try loading chat history
-    if (_messages.isEmpty) {
-      await _loadChatHistoryForModel(newModel);
-    }
+    await _loadChatHistoryForModel(newModel);
 
     if (!mounted) return;
 
@@ -740,92 +726,6 @@ for (final conv in allConversations) {
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error loading chat history for model $modelId: $e');
-      }
-    }
-  }
-
-    Future<void> _loadLastConversation() async {
-    if (!_enableHistory) return;
-    if (_isHiveLoading) return;
-
-    try {
-      // Get all conversations for current model, sorted by most recent
-      final allConversations =
-          _conversationBox.values
-              .where((conv) => conv.modelUsed == _selectedModel)
-              .toList()
-            ..sort(
-              (a, b) =>
-                  b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-            );
-
-      if (allConversations.isEmpty) {
-        if (kDebugMode) {
-          print('📭 No conversations found for model: $_selectedModel');
-        }
-        return;
-      }
-
-      // Get the most recent conversation
-      final latestConversation = allConversations.first;
-
-      // Load its messages
-      final messages =
-          _chatBox.values
-              .where((msg) => msg.conversationId == latestConversation.id)
-              .toList()
-            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-
-      if (messages.isEmpty) {
-        if (kDebugMode) {
-          print('📭 No messages in latest conversation');
-        }
-        return;
-      }
-
-      if (mounted) {
-        setState(() {
-          _messages.clear();
-          _messages.addAll(
-            messages.map(
-              (msg) => ChatMessage(
-                text: msg.text,
-                isUser: msg.isUser,
-                timestamp: msg.timestamp,
-                isLoading: false,
-                isError: msg.isError,
-                thinkingProcess: msg.thinkingProcess,
-                thinkingTime:
-                    msg.thinkingTimeMs != null
-                        ? Duration(milliseconds: msg.thinkingTimeMs!)
-                        : null,
-                images: msg.imageBytes,
-                isIncomplete: msg.isIncomplete ?? false,
-              ),
-            ),
-          );
-          _activeConversationId = latestConversation.id;
-          _forceNewConversation = false;
-        });
-
-        if (kDebugMode) {
-          print(
-            '✅ Auto-loaded ${messages.length} messages from latest conversation',
-          );
-        }
-
-        // Scroll to bottom after loading
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _scrollController.hasClients) {
-            _scrollController.jumpTo(
-              _scrollController.position.maxScrollExtent,
-            );
-          }
-        });
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error loading last conversation: $e');
       }
     }
   }
