@@ -8,7 +8,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:flutter_adsense/flutter_adsense.dart';
-//import 'package:webview_flutter_web/webview_flutter_web.dart';
+import 'package:webview_flutter_web/webview_flutter_web.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';

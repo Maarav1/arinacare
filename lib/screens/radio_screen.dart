@@ -197,19 +197,7 @@ class _RadioScreenState extends State<RadioScreen> {
 
     // Initialize stations with optimized streams
     _stations.addAll([
-      RadioStation(
-        id: 'bbc_world_service',
-        name: 'BBC World Service',
-        description: 'International news, analysis and information',
-        streamUrl: 'https://stream.live.vc.bbcmedia.co.uk/bbc_world_service',
-        logoUrl:
-            'https://cdn.pixabay.com/photo/2016/06/13/17/30/logo-1454921_1280.png',
-        language: 'English',
-        category: 'News',
-        country: 'UK',
-        color: Colors.blue,
-        bitrate: '48 kbps',
-      ),
+      
       RadioStation(
         id: 'npr',
         name: 'NPR News',
@@ -222,6 +210,19 @@ class _RadioScreenState extends State<RadioScreen> {
         country: 'USA',
         color: Colors.indigo,
         bitrate: '64 kbps',
+      ),
+      RadioStation(
+        id: 'bbc_world_service',
+        name: 'BBC World Service',
+        description: 'International news, analysis and information',
+        streamUrl: 'https://stream.live.vc.bbcmedia.co.uk/bbc_world_service',
+        logoUrl:
+            'https://cdn.pixabay.com/photo/2016/06/13/17/30/logo-1454921_1280.png',
+        language: 'English',
+        category: 'News',
+        country: 'UK',
+        color: Colors.blue,
+        bitrate: '48 kbps',
       ),
       RadioStation(
         id: 'rthk_radio_3',
