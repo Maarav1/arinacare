@@ -92,6 +92,14 @@ jobs:
           cd $GITHUB_WORKSPACE
           flutter analyze --no-fatal-infos || true
 
+      # ── Step 7.5: Generate Hive Adapters ───────────────────────
+      - name: 🏗️ Generate Hive Adapters
+        run: |
+          export PATH="$HOME/flutter/bin:$PATH"
+          cd $GITHUB_WORKSPACE
+          dart run build_runner build --delete-conflicting-outputs
+          echo "✅ Hive adapters generated"
+
       # ── Step 8: Build Flutter Web ──────────────────────────────
       # GEMINI_API_KEY removed — Gemini now uses OAuth2 via Cloud Function proxy
       # NEWS_API_KEY removed — News now proxied via Cloud Function
