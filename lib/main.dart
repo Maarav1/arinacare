@@ -14,7 +14,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'firebase_options.dart';
-import 'screens/hive_models.dart';
+import 'package:arina_cave/hive_models.dart';
 
 // ================== GLOBAL STREAMS ==================
 final StreamController<Map<String, String>> deepLinkController =
@@ -424,6 +424,13 @@ class _MyAppState extends State<MyApp> {
         primarySwatch: Colors.blue,
         useMaterial3: true,
         visualDensity: VisualDensity.adaptivePlatformDensity,
+
+        // 👇 This is the new block to make selections light blue
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: Colors.lightBlue,
+          selectionColor: Colors.lightBlueAccent,
+          selectionHandleColor: Colors.lightBlue,
+        ),
       ),
     );
   }

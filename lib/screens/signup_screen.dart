@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+//import 'package:arina_cave/web/web_image_helper.dart';   //  uncomment in web builds
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb; // ✅ ADD THIS
@@ -15,7 +16,7 @@ import 'package:http/http.dart' as http;
 import '../services/validation_service.dart';
 import '../constants/app_constants.dart';
 import '../widgets/signup_form_fields.dart';
-import '../web/web_image_helper.dart';
+//import '../web/web_image_helper.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -214,16 +215,16 @@ class _SignupScreenState extends State<SignupScreen> {
 
       if (kIsWeb) {
         // dont ever remore this will be uncomented during web builds
-         Web: Use the web helper
-        final bytes = await WebImageHelper.pickImage();
+        // Web: Use the web helper
+       /* final bytes = await WebImageHelper.pickImage();
         if (bytes != null) {
-        setState(() {
-          _webImageBytes = bytes;
-          _profileImage = File(''); // Placeholder for web
-          _webImageName = 'profile.jpg';
-         });
-         _showSuccessSnackBar('Image selected successfully!');
-        }
+          setState(() {
+            _webImageBytes = bytes;
+            _profileImage = File(''); // Placeholder for web
+            _webImageName = 'profile.jpg';
+          });
+          _showSuccessSnackBar('Image selected successfully!');
+        }  */ 
       } else {
         // Mobile: Use image_picker
         final pickedFile = await _picker.pickImage(
