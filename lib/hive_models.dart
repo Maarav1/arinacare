@@ -1,29 +1,30 @@
 // lib/hive_models.dart
 import 'package:hive/hive.dart';
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 part 'hive_models.g.dart';
 
 @HiveType(typeId: 0)
 class ChatMessageHive extends HiveObject {
   @HiveField(0)
-  late String text;
+  String text = '';
 
   @HiveField(1)
-  late bool isUser;
+  bool isUser = false;
 
   @HiveField(2)
-  late DateTime timestamp;
+  DateTime timestamp = DateTime.now();
 
   @HiveField(3)
-  late bool isError;
+  bool isError = false;
 
   @HiveField(4)
-  late String? modelUsed;
+  String modelUsed = '';
 
   @HiveField(5)
-  late String conversationId;
+  String conversationId = '';
 
+  // THINKING MODE FIELDS
   @HiveField(6)
   String? thinkingProcess;
 
@@ -35,34 +36,56 @@ class ChatMessageHive extends HiveObject {
 
   @HiveField(9)
   bool? isIncomplete;
+
+  // Constructor with all fields
+  ChatMessageHive({
+    required this.text,
+    required this.isUser,
+    required this.timestamp,
+    this.isError = false,
+    required this.modelUsed,
+    required this.conversationId,
+    this.thinkingProcess,
+    this.thinkingTimeMs,
+    this.imageBytes,
+    this.isIncomplete,
+  });
 }
 
 @HiveType(typeId: 1)
 class ConversationHive extends HiveObject {
   @HiveField(0)
-  late String id;
+  String id = '';
 
   @HiveField(1)
-  late DateTime lastMessageTimestamp;
+  DateTime lastMessageTimestamp = DateTime.now();
 
   @HiveField(2)
-  late int messageCount;
+  int messageCount = 0;
 
   @HiveField(3)
-  late String modelUsed;
+  String modelUsed = '';
+
+  // NEW — AI-assigned topic title (2-3 words)
+  @HiveField(4)
+  String? title;
+
+  ConversationHive();
 }
 
 @HiveType(typeId: 2)
 class UserProfileHive extends HiveObject {
   @HiveField(0)
-  late String name;
+  String name = '';
 
   @HiveField(1)
-  late String interests;
+  String interests = '';
 
   @HiveField(2)
-  late DateTime createdAt;
+  DateTime createdAt = DateTime.now();
 
   @HiveField(3)
-  late DateTime updatedAt;
+  DateTime updatedAt = DateTime.now();
+
+  UserProfileHive();
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -7,15 +8,15 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:flutter_adsense/flutter_adsense.dart';
-import 'package:webview_flutter_web/webview_flutter_web.dart';
+// flutter_adsense is web-only; guard it so mobile builds don't break.
+// ignore: avoid_web_libraries_in_flutter
+import 'adsense_stub.dart' if (dart.library.js_interop) 'adsense_real.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:share_plus/share_plus.dart';
-import 'hive_models.dart';
+import 'package:arina_cave/hive_models.dart';
 
 class AIScreen extends StatefulWidget {
   const AIScreen({super.key});
@@ -25,7 +26,7 @@ class AIScreen extends StatefulWidget {
 }
 
 class _AIScreenState extends State<AIScreen>
-  with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   late final WebViewController _controller;
   bool _isLoading = false;
   bool _showPlatformSelection = true;
@@ -47,13 +48,24 @@ class _AIScreenState extends State<AIScreen>
   final List<ChatMessage> _messages = [];
   bool _geminiInitialized = false;
   bool _isSendingMessage = false;
-  
+
   bool _enableThinking = false;
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _interestsController = TextEditingController();
-  // ValueNotifier for send button state to avoid full rebuilds
   final ValueNotifier<bool> _hasTextOrImages = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _isSendingNotifier = ValueNotifier<bool>(false);
+
+  final ValueNotifier<int> _profileVersion = ValueNotifier<int>(0);
+
+  String _currentTopic = '';
+
+  // Input box expansion state (single line by default).
+  bool _inputExpanded = false;
+
+  // Header rotation (instant, every 5 minutes).
+  Timer? _headerRotateTimer;
+  int _headerRotation = 0;
+  static const int _headerChipCount = 11;
 
   bool _forceNewConversation = false;
   String? _activeConversationId;
@@ -79,36 +91,38 @@ class _AIScreenState extends State<AIScreen>
     GeminiModel(
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
-      description: 'High-speed chat',
+      description: 'Best price-performance',
       priority: 'Recommended',
       bestFor: 'Most applications',
       isRecommended: true,
     ),
     GeminiModel(
-      id: 'gemini-3.6-flash',
-      name: 'Gemini 2.5 Pro',
-      description: 'Complex reasoning',
-      priority: 'High Reasoning',
-      bestFor: 'Advanced tasks',
-      isRecommended: false,
-    ),
-    GeminiModel(
       id: 'gemini-2.5-flash-lite',
-      name: 'Gemini 2.5 Flash Latest',
-      description: 'Latest updates',
-      priority: 'Cutting Edge',
-      bestFor: 'Latest features',
+      name: 'Gemini 2.5 Flash-Lite',
+      description: 'Fastest & cheapest',
+      priority: 'Budget',
+      bestFor: 'Simple tasks',
       isRecommended: false,
     ),
     GeminiModel(
-      id: 'gemini-3-flash-preview',
-      name: 'Gemini 3 Flash Preview',
-      description: 'PhD-level reasoning',
-      priority: 'Newest Frontier',
-      bestFor: 'Latest model',
+      id: 'gemini-3.5-flash-lite',
+      name: 'Gemini 3.5 flash-lite',
+      description: 'Stable workhorse',
+      priority: 'Balanced',
+      bestFor: 'General use',
+      isRecommended: false,
+    ),
+    GeminiModel(
+      id: 'gemini-flash-latest',
+      name: 'Gemini 3.8 Flash',
+      description: 'Ultra-cheap tier',
+      priority: 'Budget',
+      bestFor: 'High volume',
       isRecommended: false,
     ),
   ];
+
+  final List<GlobalKey> _messageKeys = [];
 
   final List<AIPlatform> _aiPlatforms = [
     AIPlatform(
@@ -158,28 +172,42 @@ class _AIScreenState extends State<AIScreen>
   final ImagePicker _picker = ImagePicker();
   final List<Uint8List> _selectedImages = [];
 
-  bool _enableAutoScroll = true;
-  bool _enableStreaming = true;
-  bool _enableImageUpload = true;
-  bool _enableHistory = true;
+  final bool _enableAutoScroll = true;
+  final bool _enableStreaming = true;
+  final bool _enableImageUpload = true;
+  final bool _enableHistory = true;
   double _temperature = 0.2;
 
-  int _maxContextMessages = 10;
+  int _maxContextMessages = 100;
   bool _enableSmartContext = true;
+
+  bool _alwaysSearchForAccuracy = true;
 
   final Stopwatch _thinkingStopwatch = Stopwatch();
   String _currentThinkingProcess = '';
   bool _isThinkingComplete = false;
   bool _isThinkingPhase = false;
 
+  DateTime? _thinkingPhaseStartedAt;
+  static const Duration _thinkingPhaseTimeout = Duration(seconds: 60);
+
   final bool _enableWebSearch = false;
 
   Timer? _autoScrollTimer;
-
   Timer? _scrollButtonTimer;
   bool _showScrollButton = false;
   bool _userScrolledUp = false;
   bool _isRetryCancelled = false;
+
+  // The index of the currently shown "active turn" for the header chip.
+  // Updated as the user scrolls or when a new turn is added.
+  int _currentVisibleTurn = 1;
+
+  // Tracks the index of the current error bubble so retries replace it
+  // in place instead of appending a new one.
+  int? _activeErrorIndex;
+
+  bool get _isMobile => !kIsWeb;
 
   @override
   bool get wantKeepAlive => true;
@@ -193,7 +221,7 @@ class _AIScreenState extends State<AIScreen>
     _initializeWebView();
     _initializeFocusNode();
 
-    if (!kIsWeb) {
+    if (_isMobile) {
       MobileAds.instance.initialize();
       _loadBannerAd();
       _loadInterstitialAd();
@@ -203,6 +231,14 @@ class _AIScreenState extends State<AIScreen>
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
     _messageController.addListener(_updateSendButtonState);
+
+    // Rotate header chips INSTANTLY every 5 minutes (no animation).
+    _headerRotateTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (!mounted) return;
+      setState(() {
+        _headerRotation = (_headerRotation + 1) % _headerChipCount;
+      });
+    });
   }
 
   void _updateSendButtonState() {
@@ -211,14 +247,11 @@ class _AIScreenState extends State<AIScreen>
     _hasTextOrImages.value = hasText || hasImages;
   }
 
-
   void _onScroll() {
     if (!_scrollController.hasClients) return;
-
     final isNearBottom =
         _scrollController.offset >=
         _scrollController.position.maxScrollExtent - 150;
-
     if (!isNearBottom) {
       if (!_showScrollButton) {
         setState(() {
@@ -235,6 +268,68 @@ class _AIScreenState extends State<AIScreen>
         });
       }
     }
+
+    // Update the header topic based on which turn is currently visible
+    // near the top of the list.
+    _recalculateVisibleTurn();
+  }
+
+    /// Looks at the current scroll offset and figures out which user
+  /// message (turn) is closest to the top. Updates _currentVisibleTurn
+  /// so the header can show that turn's topic.
+  void _recalculateVisibleTurn() {
+    if (!_scrollController.hasClients) return;
+    if (_messages.isEmpty) {
+      if (_currentVisibleTurn != 1) {
+        setState(() => _currentVisibleTurn = 1);
+      }
+      return;
+    }
+
+    // Only consider the first few user messages per frame — we just
+    // need to know which one is closest to the top of the viewport.
+    int visibleTurn = 1;
+    int userCount = 0;
+    for (int i = 0; i < _messages.length; i++) {
+      if (!_messages[i].isUser) continue;
+      userCount++;
+      if (i >= _messageKeys.length) continue;
+      final ctx = _messageKeys[i].currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null) continue;
+      final pos = box.localToGlobal(Offset.zero);
+      // The chat area begins roughly below the header (~34px) and the
+      // AppBar (~56px). We use 60 as the threshold for "this turn is
+      // now above the visible reading area".
+      const topThreshold = 60.0;
+      if (pos.dy < topThreshold) {
+        visibleTurn = userCount;
+      } else {
+        break;
+      }
+    }
+    if (visibleTurn != _currentVisibleTurn) {
+      setState(() => _currentVisibleTurn = visibleTurn);
+    }
+  }
+
+  /// Returns the topic for the Nth user turn, derived from the first 3
+  /// words of that user's message, or falls back to _currentTopic for
+  /// turn 1 if no message exists yet.
+  String _topicForTurn(int turn) {
+    if (turn < 1) turn = 1;
+    int userCount = 0;
+    for (final m in _messages) {
+      if (!m.isUser) continue;
+      userCount++;
+      if (userCount == turn) {
+        final words = m.text.trim().split(RegExp(r'\s+'));
+        final take = words.length >= 3 ? 3 : words.length;
+        return words.take(take).join(' ');
+      }
+    }
+    return _currentTopic.isNotEmpty ? _currentTopic : 'Chat';
   }
 
   void _resetScrollButtonTimer() {
@@ -249,11 +344,7 @@ class _AIScreenState extends State<AIScreen>
   }
 
   void _initializeFocusNode() {
-    _inputFocusNode = FocusNode(
-      onKeyEvent: (node, event) {
-        return KeyEventResult.ignored;
-      },
-    );
+    _inputFocusNode = FocusNode();
   }
 
   @override
@@ -271,19 +362,18 @@ class _AIScreenState extends State<AIScreen>
   }
 
   void _cleanupResourcesSync() {
-    // Cancel all timers synchronously
     _interstitialTimer?.cancel();
     _interstitialTimer = null;
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
     _scrollButtonTimer?.cancel();
     _scrollButtonTimer = null;
+    _headerRotateTimer?.cancel();
+    _headerRotateTimer = null;
 
-    // Cancel stream subscription synchronously
     _streamSubscription?.cancel();
     _streamSubscription = null;
 
-    // Dispose controllers
     _scrollController.removeListener(_onScroll);
     _messageController.removeListener(_updateSendButtonState);
     _messageController.dispose();
@@ -291,20 +381,17 @@ class _AIScreenState extends State<AIScreen>
     _interestsController.dispose();
     _inputFocusNode?.dispose();
     _scrollController.dispose();
-    _hasTextOrImages.dispose(); // ADD THIS
-    _isSendingNotifier.dispose(); 
+    _hasTextOrImages.dispose();
+    _isSendingNotifier.dispose();
+    _profileVersion.dispose();
 
-    // Dispose ads
-    if (!kIsWeb) {
+    if (_isMobile) {
       _bannerAd.dispose();
       _interstitialAd?.dispose();
     }
-
-    // Fire-and-forget save
-    _saveConversation();
   }
 
-     Future<void> _initializeHive() async {
+  Future<void> _initializeHive() async {
     try {
       _chatBox = await Hive.openBox<ChatMessageHive>('chat_messages');
       _conversationBox = await Hive.openBox<ConversationHive>('conversations');
@@ -312,7 +399,6 @@ class _AIScreenState extends State<AIScreen>
 
       await _loadUserProfile();
       await _loadChatHistoryForModel(_selectedModel);
-      await _cleanOldConversations();
 
       if (mounted) {
         setState(() {
@@ -331,39 +417,14 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-  Future<void> _cleanOldConversations() async {
-    if (_isHiveLoading) return; // ADD THIS LINE
-    final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
-
-    final oldConversations =
-        _conversationBox.values
-            .where((conv) => conv.lastMessageTimestamp.isBefore(thirtyDaysAgo))
-            .toList();
-
-    for (final conv in oldConversations) {
-      final messagesToDelete =
-          _chatBox.values
-              .where((msg) => msg.conversationId == conv.id)
-              .toList();
-
-      for (final msg in messagesToDelete) {
-        await msg.delete();
-      }
-
-      await conv.delete();
-    }
-  }
-
   void _initializeApiKey() {
-    // Always use proxy mode for both web and mobile
-    // The API key stays on the server, not in the client
     _geminiApiKey = 'proxy';
     _geminiInitialized = true;
-
     if (kDebugMode) {
       print('✅ Gemini API using proxy (secure)');
     }
   }
+
   void _loadBannerAd() {
     _bannerAd = BannerAd(
       size: AdSize.banner,
@@ -428,7 +489,6 @@ class _AIScreenState extends State<AIScreen>
         _showInterstitialAd();
       }
     });
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_isInterstitialAdLoaded && _interstitialAd != null) {
         _showInterstitialAd();
@@ -445,13 +505,8 @@ class _AIScreenState extends State<AIScreen>
   }
 
   Widget _buildBannerAd() {
-    if (kIsWeb) {
-      return const SizedBox.shrink();
-    }
-
-    if (!_isBannerAdLoaded) {
-      return const SizedBox.shrink();
-    }
+    if (kIsWeb) return const SizedBox.shrink();
+    if (!_isBannerAdLoaded) return const SizedBox.shrink();
     return Container(
       height: 50,
       margin: const EdgeInsets.only(bottom: 8),
@@ -461,14 +516,12 @@ class _AIScreenState extends State<AIScreen>
 
   Future<void> _pickImage() async {
     if (!_enableImageUpload) return;
-
     try {
       final XFile? image = await _picker.pickImage(
         source: ImageSource.gallery,
         imageQuality: 85,
         maxWidth: 1024,
       );
-
       if (image != null) {
         final bytes = await image.readAsBytes();
         if (mounted) {
@@ -478,9 +531,7 @@ class _AIScreenState extends State<AIScreen>
         }
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('Image picker error: $e');
-      }
+      if (kDebugMode) print('Image picker error: $e');
     }
   }
 
@@ -492,7 +543,7 @@ class _AIScreenState extends State<AIScreen>
     }
   }
 
-      Future<void> _changeModel(String newModel) async {
+  Future<void> _changeModel(String newModel) async {
     await _saveConversation();
     await _cancelCurrentStream();
 
@@ -501,6 +552,8 @@ class _AIScreenState extends State<AIScreen>
     setState(() {
       _selectedModel = newModel;
       _messages.clear();
+      _messageKeys.clear();
+      _activeErrorIndex = null;
       _currentStreamText = '';
       _selectedImages.clear();
       _currentThinkingProcess = '';
@@ -513,12 +566,13 @@ class _AIScreenState extends State<AIScreen>
       _hasPartialResponse = false;
       _partialResponseOnError = '';
       _activeConversationId = null;
+      _currentTopic = '';
+      _currentVisibleTurn = 1;
     });
 
     await _loadChatHistoryForModel(newModel);
 
     if (!mounted) return;
-
     final modelName = _availableModels.firstWhere((m) => m.id == newModel).name;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -576,31 +630,28 @@ class _AIScreenState extends State<AIScreen>
           _chatBox.values
               .where((msg) => msg.conversationId == conversationId)
               .toList();
-
       for (final msg in messagesToDelete) {
         await msg.delete();
       }
-
       final conversationsToDelete =
           _conversationBox.values
               .where((conv) => conv.id == conversationId)
               .toList();
-
       for (final conv in conversationsToDelete) {
         await conv.delete();
       }
-
       if (_activeConversationId == conversationId) {
         setState(() {
           _messages.clear();
+          _messageKeys.clear();
           _activeConversationId = null;
           _currentStreamText = '';
           _currentThinkingProcess = '';
           _isThinkingComplete = false;
           _isThinkingPhase = false;
+          _currentVisibleTurn = 1;
         });
       }
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -611,9 +662,7 @@ class _AIScreenState extends State<AIScreen>
         );
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error deleting conversation: $e');
-      }
+      if (kDebugMode) print('❌ Error deleting conversation: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -628,7 +677,7 @@ class _AIScreenState extends State<AIScreen>
 
   Future<void> _loadChatHistoryForModel(String modelId) async {
     if (!_enableHistory) return;
-    if (_isHiveLoading) return; // ADD THIS LINE
+    if (_isHiveLoading) return;
 
     try {
       final allConversations =
@@ -640,24 +689,22 @@ class _AIScreenState extends State<AIScreen>
                   b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
             );
 
-     // Silently remove duplicate conversations with same title (keep oldest)
-// No confirmation dialog is shown
-final uniqueConversations = <String, ConversationHive>{};
-for (final conv in allConversations) {
-  final preview = _getConversationPreview(conv.id);
-  if (!uniqueConversations.containsKey(preview)) {
-    uniqueConversations[preview] = conv;
-  } else {
-    // Silent delete – no dialog
-    final messagesToDelete = _chatBox.values
-        .where((msg) => msg.conversationId == conv.id)
-        .toList();
-    for (final msg in messagesToDelete) {
-      await msg.delete();
-    }
-    await conv.delete();
-  }
-}
+      final uniqueConversations = <String, ConversationHive>{};
+      for (final conv in allConversations) {
+        final preview = _getConversationPreview(conv.id);
+        if (!uniqueConversations.containsKey(preview)) {
+          uniqueConversations[preview] = conv;
+        } else {
+          final messagesToDelete =
+              _chatBox.values
+                  .where((msg) => msg.conversationId == conv.id)
+                  .toList();
+          for (final msg in messagesToDelete) {
+            await msg.delete();
+          }
+          await conv.delete();
+        }
+      }
 
       final conversations =
           uniqueConversations.values.toList()..sort(
@@ -666,7 +713,6 @@ for (final conv in allConversations) {
 
       if (conversations.isNotEmpty) {
         final latestConversation = conversations.first;
-
         final messages =
             _chatBox.values
                 .where((msg) => msg.conversationId == latestConversation.id)
@@ -676,9 +722,10 @@ for (final conv in allConversations) {
         if (mounted) {
           setState(() {
             _messages.clear();
-            _messages.addAll(
-              messages.map(
-                (msg) => ChatMessage(
+            _messageKeys.clear();
+            for (final msg in messages) {
+              _messages.add(
+                ChatMessage(
                   text: msg.text,
                   isUser: msg.isUser,
                   timestamp: msg.timestamp,
@@ -692,14 +739,14 @@ for (final conv in allConversations) {
                   images: msg.imageBytes,
                   isIncomplete: msg.isIncomplete ?? false,
                 ),
-              ),
-            );
+              );
+              _messageKeys.add(GlobalKey());
+            }
             _activeConversationId = latestConversation.id;
+            _currentTopic = latestConversation.title ?? '';
+            _currentVisibleTurn = 1;
           });
 
-          if (kDebugMode) {
-            print('✅ Loaded ${messages.length} messages for model: $modelId');
-          }
           final lastAiMsg = _messages.lastWhere(
             (m) => !m.isUser && m.isIncomplete && !m.isError,
             orElse:
@@ -717,10 +764,9 @@ for (final conv in allConversations) {
         if (mounted) {
           setState(() {
             _activeConversationId = null;
+            _currentTopic = '';
+            _currentVisibleTurn = 1;
           });
-        }
-        if (kDebugMode) {
-          print('📭 No saved conversation found for model: $modelId');
         }
       }
     } catch (e) {
@@ -731,6 +777,7 @@ for (final conv in allConversations) {
   }
 
   bool _isTimeSensitiveQuery(String query) {
+    if (_alwaysSearchForAccuracy) return true;
     final keywords = [
       'today',
       'now',
@@ -749,21 +796,17 @@ for (final conv in allConversations) {
       'this month',
       'this year',
     ];
-
     final lowerQuery = query.toLowerCase();
     return keywords.any((keyword) => lowerQuery.contains(keyword));
   }
 
   bool _checkIfResponseIncomplete(String response) {
     if (response.isEmpty) return false;
-
     final trimmedResponse = response.trim();
-
     if (trimmedResponse.contains('```') &&
         (trimmedResponse.split('```').length - 1) % 2 != 0) {
       return true;
     }
-
     final incompleteIndicators = [
       '...',
       '..',
@@ -778,7 +821,6 @@ for (final conv in allConversations) {
       'furthermore',
       'in addition',
     ];
-
     final lastSentence = trimmedResponse.split('\n').last.toLowerCase();
     for (final indicator in incompleteIndicators) {
       if (lastSentence.endsWith(indicator.toLowerCase()) ||
@@ -786,7 +828,6 @@ for (final conv in allConversations) {
         return true;
       }
     }
-
     final lines = trimmedResponse.split('\n');
     if (lines.isNotEmpty) {
       final lastLine = lines.last.trim();
@@ -798,7 +839,6 @@ for (final conv in allConversations) {
           !lastLine.endsWith('?')) {
         return true;
       }
-
       if (RegExp(r'^\d+\.\s').hasMatch(lastLine) &&
           !lastLine.endsWith('.') &&
           !lastLine.endsWith('!') &&
@@ -806,7 +846,6 @@ for (final conv in allConversations) {
         return true;
       }
     }
-
     return false;
   }
 
@@ -815,7 +854,6 @@ for (final conv in allConversations) {
     List<Uint8List>? currentImages,
   ) {
     final List<Map<String, dynamic>> contents = [];
-
     final userProfiles = _userProfileBox.values;
     final hasUserInfo = userProfiles.isNotEmpty;
     final userName = hasUserInfo ? userProfiles.first.name : '';
@@ -832,10 +870,10 @@ for (final conv in allConversations) {
 
 CRITICAL INSTRUCTIONS:
 1. Answer the user's CURRENT/LATEST message as the main task
-2. The previous messages are provided so you have real memory of this conversation - use them whenever the user refers to something said earlier (e.g. "what did I just say", "continue that", "as I mentioned")
-3. Do not pretend you have no memory of earlier turns in this same conversation - they are provided below and are real
+2. The previous messages are provided so you have real memory of this conversation
+3. Do not pretend you have no memory of earlier turns in this same conversation
 4. Do not repeat earlier turns back verbatim unless asked
-5. Keep your response focused on what was JUST asked, using earlier turns only as supporting context
+5. Keep your response focused on what was JUST asked
 
 Current Date: $currentDate
 Current Time: $currentTime
@@ -848,10 +886,45 @@ Current Year: $currentYear''';
       }
     }
 
-    final isTimeSensitive = _isTimeSensitiveQuery(currentPrompt);
-    if (isTimeSensitive && !_enableWebSearch) {
-      systemPrompt +=
-          '\n\nNote: For time-sensitive info, acknowledge your knowledge cutoff.';
+    systemPrompt += '''
+
+DEEP REASONING (MANDATORY):
+- Before you write anything, THINK deeply about the question.
+- Review your draft internally for factual errors, typos, and logical mistakes. Fix them silently.
+- Do NOT rush. Slow and correct beats fast and wrong.
+- If unsure, say so. Never invent names, versions, dates, or citations.
+
+TABLE FORMATTING:
+- Use proper Markdown tables (| header | header | with separator |---|---|).
+- NEVER use dots, ellipses, or placeholder text for a table.''';
+
+    if (_alwaysSearchForAccuracy) {
+      systemPrompt += '''
+
+GROUNDING & ACCURACY (MANDATORY):
+- You have Google Search grounding enabled. ALWAYS use it to verify any fact that could have changed over time.
+- NEVER say "as of my knowledge cutoff", "I don't have information about X", "X does not exist", or "the latest is Y" without checking search results first.
+- If the user names something you don't recognise, DO NOT claim it doesn't exist. Search first.
+- If search and memory disagree, trust search.''';
+
+      if (!_enableWebSearch) {
+        systemPrompt +=
+            '\n\nNote: For time-sensitive info, acknowledge your knowledge cutoff ONLY if search results are unavailable.';
+      }
+    } else {
+      final isTimeSensitive = _isTimeSensitiveQuery(currentPrompt);
+      if (isTimeSensitive && !_enableWebSearch) {
+        systemPrompt +=
+            '\n\nNote: For time-sensitive info, acknowledge your knowledge cutoff.';
+      }
+    }
+
+    final bool isFirstTurn =
+        _messages.where((m) => m.isUser).length <= 1 && _currentTopic.isEmpty;
+    if (isFirstTurn) {
+      systemPrompt += '''
+
+At the very start of your reply, output a topic tag on its own line in this exact format: [TOPIC: up to 3 words]. Then continue with your normal reply on the next line.''';
     }
 
     if (_enableThinking) {
@@ -871,7 +944,7 @@ Current Year: $currentYear''';
       'parts': [
         {
           'text':
-              'Understood. I have access to the full conversation history below and will use it as real memory.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate, year: $currentYear.${_enableThinking ? ' I will use the thinking format as specified.' : ''}',
+              'Understood. I will use the full conversation history as real memory.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate.${_alwaysSearchForAccuracy ? ' I will verify with Google Search before answering.' : ''} I will think deeply and review my draft before responding.${_enableThinking ? ' I will use the thinking format.' : ''}',
         },
       ],
     });
@@ -887,7 +960,6 @@ Current Year: $currentYear''';
               .toList();
 
       List<ChatMessage> contextMessages;
-
       if (chatMessages.length <= _maxContextMessages) {
         contextMessages = chatMessages;
       } else {
@@ -895,7 +967,6 @@ Current Year: $currentYear''';
           ...chatMessages.take(2),
           ...chatMessages.skip(chatMessages.length - (_maxContextMessages - 2)),
         ];
-
         contents.add({
           'role': 'user',
           'parts': [
@@ -925,36 +996,27 @@ Current Year: $currentYear''';
     ];
 
     if (currentImages != null && currentImages.isNotEmpty) {
-      // Determine MIME type
       String mimeType = 'image/jpeg';
       if (currentImages.isNotEmpty && currentImages[0].length > 8) {
         final firstBytes = currentImages[0].sublist(0, 8);
-        // PNG
         if (firstBytes[0] == 0x89 &&
             firstBytes[1] == 0x50 &&
             firstBytes[2] == 0x4E &&
             firstBytes[3] == 0x47) {
           mimeType = 'image/png';
-        }
-        // GIF
-        else if (firstBytes[0] == 0x47 &&
+        } else if (firstBytes[0] == 0x47 &&
             firstBytes[1] == 0x49 &&
             firstBytes[2] == 0x46) {
           mimeType = 'image/gif';
-        }
-        // WebP
-        else if (firstBytes[0] == 0x52 &&
+        } else if (firstBytes[0] == 0x52 &&
             firstBytes[1] == 0x49 &&
             firstBytes[2] == 0x46 &&
             firstBytes[3] == 0x46) {
           mimeType = 'image/webp';
-        }
-        // BMP
-        else if (firstBytes[0] == 0x42 && firstBytes[1] == 0x4D) {
+        } else if (firstBytes[0] == 0x42 && firstBytes[1] == 0x4D) {
           mimeType = 'image/bmp';
         }
       }
-
       for (var imageBytes in currentImages) {
         currentParts.add({
           'inline_data': {
@@ -966,8 +1028,11 @@ Current Year: $currentYear''';
     }
 
     contents.add({'role': 'user', 'parts': currentParts});
-
     return contents;
+  }
+
+  String _stripTopicTag(String text) {
+    return text.replaceFirst(RegExp(r'^\s*\[TOPIC:[^\]]*\]\s*\n?'), '');
   }
 
   Stream<String> _streamGeminiResponse(
@@ -975,19 +1040,10 @@ Current Year: $currentYear''';
     List<Uint8List>? images,
   }) async* {
     final bool streamMode = _enableStreaming;
-
-// Slow down streaming on web so typing effect is visible
-if (kIsWeb && streamMode) {
-  await Future.delayed(const Duration(milliseconds: 35));
-}
-
-    // Use proxy for ALL platforms (web AND mobile)
-    // This keeps the API key secure on the server
     final String url =
         'https://us-central1-lifematters-c466d.cloudfunctions.net/geminiProxy?model=$_selectedModel&streaming=true';
 
     final headers = {'Content-Type': 'application/json'};
-
     final contents = _buildSmartContext(prompt, images);
 
     final requestBody = <String, dynamic>{
@@ -996,7 +1052,7 @@ if (kIsWeb && streamMode) {
         'temperature': _temperature,
         'topK': 40,
         'topP': 0.95,
-        'maxOutputTokens': 65536,
+        'maxOutputTokens': 131072,
       },
       'safetySettings': [
         {
@@ -1022,20 +1078,14 @@ if (kIsWeb && streamMode) {
     };
 
     if (kDebugMode) {
-      print(
-        '🔗 Sending request with SMART CONTEXT (max $_maxContextMessages messages), streamMode=$streamMode',
-      );
-      print('📝 Current prompt: $prompt');
-      if (images != null && images.isNotEmpty) {
-        print('🖼️ Images: ${images.length}');
-      }
+      print('🔗 Sending request, streamMode=$streamMode');
+      print('📝 Prompt: $prompt');
     }
 
     final request = http.Request('POST', Uri.parse(url));
     request.headers.addAll(headers);
     request.body = jsonEncode(requestBody);
 
-    // Add timeout
     final streamedResponse = await request.send().timeout(
       const Duration(seconds: 90),
       onTimeout: () {
@@ -1060,17 +1110,10 @@ if (kIsWeb && streamMode) {
 
       if (chunk.startsWith('data: ')) {
         final jsonString = chunk.substring(6);
-
-        if (jsonString == '[DONE]') {
-          if (kDebugMode) {
-            print('✅ Streaming complete');
-          }
-          break;
-        }
+        if (jsonString == '[DONE]') break;
 
         try {
           final jsonData = jsonDecode(jsonString);
-
           if (jsonData['candidates'] != null &&
               jsonData['candidates'].isNotEmpty) {
             final candidate = jsonData['candidates'][0];
@@ -1085,12 +1128,27 @@ if (kIsWeb && streamMode) {
                   if (_enableThinking &&
                       buffer.contains('THINKING_START') &&
                       !buffer.contains('THINKING_END')) {
-                    continue;
+                    final startedAt = _thinkingPhaseStartedAt ?? DateTime.now();
+                    _thinkingPhaseStartedAt = startedAt;
+                    final elapsed = DateTime.now().difference(startedAt);
+                    if (elapsed < _thinkingPhaseTimeout) {
+                      continue;
+                    }
                   }
 
                   if (streamMode) {
-                    yield buffer;
+                    // Drip the buffer out in small chunks so the user
+                    // sees a "typing" effect rather than a pop.
+                    final drip = buffer;
                     buffer = '';
+                    // Break into small pieces and yield them with a
+                    // small delay between each.
+                    const chunkSize = 56;
+                    for (int i = 0; i < drip.length; i += chunkSize) {
+                      final end = (i + chunkSize).clamp(0, drip.length);
+                      yield drip.substring(i, end);
+                      await Future.delayed(const Duration(milliseconds: 1));
+                    }
                   } else {
                     fullBufferedText += buffer;
                     buffer = '';
@@ -1100,22 +1158,17 @@ if (kIsWeb && streamMode) {
             }
           }
         } catch (e) {
-          if (kDebugMode) {
-            print('⚠️ JSON parsing error: $e');
-          }
+          if (kDebugMode) print('⚠️ JSON parsing error: $e');
         }
       }
     }
 
-    if (!streamMode) {
-      yield fullBufferedText;
-    }
+    if (!streamMode) yield fullBufferedText;
   }
 
+  /// Retry replaces the previous error bubble in place. No stacking.
   Future<void> _retryFailedRequest() async {
-    // Reset cancellation flag when user manually retries
     _isRetryCancelled = false;
-
     if (_lastFailedPrompt == null) {
       final lastUser = _messages.lastWhere(
         (m) => m.isUser,
@@ -1130,7 +1183,6 @@ if (kIsWeb && streamMode) {
         return;
       }
     }
-
     if (_retryCount >= _maxRetries) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1143,13 +1195,19 @@ if (kIsWeb && streamMode) {
       }
       return;
     }
-
     _retryCount++;
 
+    // Remove the existing error bubble if we have one.
     if (mounted) {
       setState(() {
-        if (_messages.isNotEmpty && _messages.last.isError) {
-          _messages.removeLast();
+        if (_activeErrorIndex != null &&
+            _activeErrorIndex! < _messages.length &&
+            _messages[_activeErrorIndex!].isError) {
+          _messages.removeAt(_activeErrorIndex!);
+          if (_activeErrorIndex! < _messageKeys.length) {
+            _messageKeys.removeAt(_activeErrorIndex!);
+          }
+          _activeErrorIndex = null;
         }
       });
     }
@@ -1170,14 +1228,26 @@ if (kIsWeb && streamMode) {
         _isSendingNotifier.value = false;
         _isStreaming = false;
         _currentStreamText = '';
-        _messages.add(
-          ChatMessage(
+        if (_activeErrorIndex != null &&
+            _activeErrorIndex! < _messages.length) {
+          _messages[_activeErrorIndex!] = ChatMessage(
             text: '⚠️ Cancelled. Please try again.',
             isUser: false,
             timestamp: DateTime.now(),
             isError: true,
-          ),
-        );
+          );
+        } else {
+          _messages.add(
+            ChatMessage(
+              text: '⚠️ Cancelled. Please try again.',
+              isUser: false,
+              timestamp: DateTime.now(),
+              isError: true,
+            ),
+          );
+          _messageKeys.add(GlobalKey());
+          _activeErrorIndex = _messages.length - 1;
+        }
       });
     }
   }
@@ -1194,9 +1264,19 @@ if (kIsWeb && streamMode) {
         _lastIncompleteResponse = lastIncomplete.text;
       }
     }
+    if (_isContinuingResponse || _lastIncompleteResponse.isEmpty) return;
 
-    if (_isContinuingResponse || _lastIncompleteResponse.isEmpty) {
-      return;
+    List<Uint8List>? carryImages;
+    if (_messages.isNotEmpty) {
+      final lastUser = _messages.lastWhere(
+        (m) => m.isUser,
+        orElse:
+            () =>
+                ChatMessage(text: '', isUser: true, timestamp: DateTime.now()),
+      );
+      if (lastUser.images != null && lastUser.images!.isNotEmpty) {
+        carryImages = lastUser.images;
+      }
     }
 
     setState(() {
@@ -1213,21 +1293,16 @@ if (kIsWeb && streamMode) {
 
     try {
       String accumulatedResponse = '';
-
       _streamSubscription = _streamGeminiResponse(
-        "Continue your previous response from exactly where you stopped. "
-        "Do not repeat any part of what you already said, and do not "
-        "restate or re-summarize prior content - only produce the new "
-        "continuation text that comes after the cutoff point.",
+        "Continue your previous response from exactly where you stopped.",
+        images: carryImages,
       ).listen(
         (chunk) {
           if (!mounted) return;
-
           setState(() {
             accumulatedResponse += chunk;
-            _currentStreamText = accumulatedResponse;
+            _currentStreamText = _stripTopicTag(accumulatedResponse);
           });
-
           _scheduleAutoScroll();
         },
         onError: (error) {
@@ -1242,12 +1317,13 @@ if (kIsWeb && streamMode) {
                 canRetry: true,
               ),
             );
+            _messageKeys.add(GlobalKey());
+            _activeErrorIndex = _messages.length - 1;
             _resetContinueState();
           });
         },
         onDone: () async {
           if (!mounted) return;
-
           String continuation = accumulatedResponse;
           final overlapLen = _findOverlapLength(
             incompleteSnapshot,
@@ -1256,7 +1332,6 @@ if (kIsWeb && streamMode) {
           if (overlapLen > 0) {
             continuation = continuation.substring(overlapLen);
           }
-
           final continuedResponse = incompleteSnapshot + continuation;
 
           setState(() {
@@ -1268,10 +1343,10 @@ if (kIsWeb && streamMode) {
                 timestamp: DateTime.now(),
               ),
             );
+            _messageKeys.add(GlobalKey());
             _resetContinueState();
             _lastIncompleteResponse = '';
           });
-
           await _saveConversation();
         },
       );
@@ -1287,6 +1362,8 @@ if (kIsWeb && streamMode) {
             canRetry: true,
           ),
         );
+        _messageKeys.add(GlobalKey());
+        _activeErrorIndex = _messages.length - 1;
         _resetContinueState();
       });
     }
@@ -1316,83 +1393,70 @@ if (kIsWeb && streamMode) {
 
   _ParsedResponse _parseThinkingResponse(String fullResponse) {
     if (_enableThinking) {
-      final thinkingStartMarker = 'THINKING_START';
-      final thinkingEndMarker = 'THINKING_END';
-
+      const thinkingStartMarker = 'THINKING_START';
+      const thinkingEndMarker = 'THINKING_END';
       if (fullResponse.contains(thinkingStartMarker) &&
           fullResponse.contains(thinkingEndMarker)) {
-        final startIndex = fullResponse.indexOf(thinkingStartMarker);
-        final endIndex = fullResponse.indexOf(thinkingEndMarker);
-
-        if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
-          final thinkingStart = startIndex + thinkingStartMarker.length;
-          final thinkingProcess =
-              fullResponse.substring(thinkingStart, endIndex).trim();
-
-          final finalResponse =
+        final thinkingBuffer = StringBuffer();
+        int cursor = 0;
+        while (true) {
+          final start = fullResponse.indexOf(thinkingStartMarker, cursor);
+          if (start == -1) break;
+          final end = fullResponse.indexOf(
+            thinkingEndMarker,
+            start + thinkingStartMarker.length,
+          );
+          if (end == -1) break;
+          final chunk =
               fullResponse
-                  .substring(endIndex + thinkingEndMarker.length)
+                  .substring(start + thinkingStartMarker.length, end)
                   .trim();
-
+          if (chunk.isNotEmpty) {
+            if (thinkingBuffer.isNotEmpty) thinkingBuffer.write('\n\n');
+            thinkingBuffer.write(chunk);
+          }
+          cursor = end + thinkingEndMarker.length;
+        }
+        final cleaned =
+            fullResponse
+                .replaceAll(thinkingStartMarker, '')
+                .replaceAll(thinkingEndMarker, '')
+                .trim();
+        if (thinkingBuffer.isNotEmpty) {
           return _ParsedResponse(
-            thinkingProcess: thinkingProcess,
-            finalResponse: finalResponse,
+            thinkingProcess: thinkingBuffer.toString(),
+            finalResponse: cleaned,
           );
         }
       }
     }
-
     return _ParsedResponse(thinkingProcess: '', finalResponse: fullResponse);
   }
 
   String _thinkingPhaseLabel(String thinkingTextSoFar) {
     final length = thinkingTextSoFar.trim().length;
-
-    if (length == 0) {
-      return '🧠 Thinking...';
-    } else if (length < 40) {
-      return '🔍 Sleuthing through the data...';
-    } else if (length < 80) {
-      return '🧠 Cogitating on your question...';
-    } else if (length < 120) {
-      return '🔎 Figuring out the best response...';
-    } else if (length < 160) {
-      return '📊 Analyzing the context...';
-    } else if (length < 200) {
-      return '🤔 Contemplating the nuances...';
-    } else if (length < 240) {
-      return '🧩 Piecing together the answer...';
-    } else if (length < 280) {
-      return '📝 Formulating a response...';
-    } else if (length < 320) {
-      return '🔬 Examining the details...';
-    } else if (length < 360) {
-      return '🧠 Processing your request...';
-    } else if (length < 400) {
-      return '⚡ Running the reasoning...';
-    } else if (length < 440) {
-      return '🌀 Fathoming the deeper meaning...';
-    } else if (length < 480) {
-      return '🤔 Musing over the possibilities...';
-    } else if (length < 520) {
-      return '📐 Triangulating the best approach...';
-    } else if (length < 560) {
-      return '⚡ Honing the response...';
-    } else if (length < 600) {
-      return '🎯 Mulling over the final details...';
-    } else if (length < 640) {
-      return '🖼️ Picturing the complete answer...';
-    } else if (length < 680) {
-      return '🔀 Untangling the complexity...';
-    } else if (length < 720) {
-      return '🔍 Sifting through the reasoning...';
-    } else if (length < 760) {
-      return '📊 Reckoning with the evidence...';
-    } else if (length < 800) {
-      return '💡 Connecting the final dots...';
-    } else {
-      return '✨ Finalizing the answer...';
-    }
+    if (length == 0) return '🧠 Thinking...';
+    if (length < 40) return '🔍 Sleuthing through the data...';
+    if (length < 80) return '🧠 Cogitating on your question...';
+    if (length < 120) return '🔎 Figuring out the best response...';
+    if (length < 160) return '📊 Analyzing the context...';
+    if (length < 200) return '🤔 Contemplating the nuances...';
+    if (length < 240) return '🧩 Piecing together the answer...';
+    if (length < 280) return '📝 Formulating a response...';
+    if (length < 320) return '🔬 Examining the details...';
+    if (length < 360) return '🧠 Processing your request...';
+    if (length < 400) return '⚡ Running the reasoning...';
+    if (length < 440) return '🌀 Fathoming the deeper meaning...';
+    if (length < 480) return '🤔 Musing over the possibilities...';
+    if (length < 520) return '📐 Triangulating the best approach...';
+    if (length < 560) return '⚡ Honing the response...';
+    if (length < 600) return '🎯 Mulling over the final details...';
+    if (length < 640) return '🖼️ Picturing the complete answer...';
+    if (length < 680) return '🔀 Untangling the complexity...';
+    if (length < 720) return '🔍 Sifting through the reasoning...';
+    if (length < 760) return '📊 Reckoning with the evidence...';
+    if (length < 800) return '💡 Connecting the final dots...';
+    return '✨ Finalizing the answer...';
   }
 
   Future<ConversationHive> _resolveCurrentConversation() async {
@@ -1405,7 +1469,9 @@ if (kIsWeb && streamMode) {
             ..lastMessageTimestamp = DateTime.now()
             ..messageCount = _messages.length
             ..modelUsed = _selectedModel;
-
+      if (_currentTopic.isNotEmpty) {
+        conversation.title = _currentTopic;
+      }
       await _conversationBox.add(conversation);
       _forceNewConversation = false;
       _activeConversationId = conversationId;
@@ -1422,30 +1488,32 @@ if (kIsWeb && streamMode) {
                 ..messageCount = 0
                 ..modelUsed = _selectedModel,
     );
-
+    if (_currentTopic.isNotEmpty) {
+      existing.title = _currentTopic;
+    }
     if (!_conversationBox.values.any((c) => c.id == _activeConversationId)) {
       await _conversationBox.add(existing);
     }
-
     return existing;
   }
 
   Future<void> _saveConversation() async {
     if (!_enableHistory || _messages.isEmpty) return;
-    if (_isHiveLoading) return; // ADD THIS LINE
+    if (_isHiveLoading) return;
     try {
       final currentConversation = await _resolveCurrentConversation();
       currentConversation.lastMessageTimestamp = DateTime.now();
       currentConversation.messageCount = _messages.length;
+      if (_currentTopic.isNotEmpty) {
+        currentConversation.title = _currentTopic;
+      }
       await currentConversation.save();
 
       final finalConversationId = currentConversation.id;
-
       final oldMessages =
           _chatBox.values
               .where((msg) => msg.conversationId == finalConversationId)
               .toList();
-
       for (final msg in oldMessages) {
         await msg.delete();
       }
@@ -1463,17 +1531,11 @@ if (kIsWeb && streamMode) {
           imageBytes: message.images,
           isIncomplete: message.isIncomplete,
         );
-
         await _chatBox.add(chatMsg);
-      }
-
-      if (kDebugMode) {
-        print('✅ Saved conversation for model: $_selectedModel');
-        print('📊 Message count: ${_messages.length}');
       }
     } catch (e) {
       if (kDebugMode) {
-        print('❌ Error saving conversation for model $_selectedModel: $e');
+        print('❌ Error saving conversation: $e');
       }
     }
   }
@@ -1481,11 +1543,11 @@ if (kIsWeb && streamMode) {
   Future<void> _startNewChat() async {
     await _cancelCurrentStream();
     await _saveConversation();
-
     if (!mounted) return;
-
     setState(() {
       _messages.clear();
+      _messageKeys.clear();
+      _activeErrorIndex = null;
       _currentStreamText = '';
       _selectedImages.clear();
       _currentThinkingProcess = '';
@@ -1499,8 +1561,10 @@ if (kIsWeb && streamMode) {
       _partialResponseOnError = '';
       _forceNewConversation = true;
       _activeConversationId = null;
+      _currentTopic = '';
+      _currentVisibleTurn = 1;
+      _inputExpanded = false;
     });
-
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Started a new chat'),
@@ -1513,21 +1577,26 @@ if (kIsWeb && streamMode) {
   Future<void> _loadSpecificConversation(String conversationId) async {
     await _cancelCurrentStream();
     await _saveConversation();
-
     try {
       final messages =
           _chatBox.values
               .where((msg) => msg.conversationId == conversationId)
               .toList()
             ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-
       if (!mounted) return;
+
+      final conv = _conversationBox.values.firstWhere(
+        (c) => c.id == conversationId,
+        orElse: () => ConversationHive()..id = conversationId,
+      );
 
       setState(() {
         _messages.clear();
-        _messages.addAll(
-          messages.map(
-            (msg) => ChatMessage(
+        _messageKeys.clear();
+        _activeErrorIndex = null;
+        for (final msg in messages) {
+          _messages.add(
+            ChatMessage(
               text: msg.text,
               isUser: msg.isUser,
               timestamp: msg.timestamp,
@@ -1541,12 +1610,15 @@ if (kIsWeb && streamMode) {
               images: msg.imageBytes,
               isIncomplete: msg.isIncomplete ?? false,
             ),
-          ),
-        );
+          );
+          _messageKeys.add(GlobalKey());
+        }
         _forceNewConversation = false;
         _activeConversationId = conversationId;
         _userScrolledUp = false;
         _showScrollButton = false;
+        _currentTopic = conv.title ?? '';
+        _currentVisibleTurn = 1;
       });
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1555,20 +1627,22 @@ if (kIsWeb && streamMode) {
         }
       });
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error loading specific conversation: $e');
-      }
+      if (kDebugMode) print('❌ Error loading specific conversation: $e');
     }
   }
 
   Future<void> _sendGeminiMessage() async {
     final String message = _messageController.text.trim();
     final List<Uint8List> images = List.from(_selectedImages);
-
     if (message.isEmpty && images.isEmpty) return;
     if (_isSendingMessage) return;
 
     _messageController.clear();
+    if (_inputExpanded) {
+      setState(() {
+        _inputExpanded = false;
+      });
+    }
 
     if (mounted) {
       setState(() {
@@ -1579,7 +1653,6 @@ if (kIsWeb && streamMode) {
       });
     }
 
-    // Compress images before sending
     List<Uint8List>? compressedImages;
     if (images.isNotEmpty) {
       compressedImages = await _compressImages(images);
@@ -1603,6 +1676,7 @@ if (kIsWeb && streamMode) {
       _lastFailedImages = images;
       _hasPartialResponse = false;
       _partialResponseOnError = '';
+      _isRetryCancelled = false;
     }
 
     await _cancelCurrentStream();
@@ -1614,6 +1688,7 @@ if (kIsWeb && streamMode) {
         _isThinkingComplete = false;
         _isThinkingPhase = false;
         _currentStreamText = '';
+        _thinkingPhaseStartedAt = null;
 
         if (!isRetry) {
           _messages.add(
@@ -1624,6 +1699,10 @@ if (kIsWeb && streamMode) {
               images: images?.isNotEmpty == true ? List.from(images!) : null,
             ),
           );
+          _messageKeys.add(GlobalKey());
+          _activeErrorIndex = null;
+          // New user turn -> bump visible turn.
+          _currentVisibleTurn = _messages.where((m) => m.isUser).length;
         }
       });
     }
@@ -1647,9 +1726,7 @@ if (kIsWeb && streamMode) {
       ).listen(
         (chunk) {
           try {
-            // ADD TRY BLOCK
             if (!mounted) return;
-
             setState(() {
               accumulatedResponse += chunk;
               _partialResponseOnError = accumulatedResponse;
@@ -1660,7 +1737,7 @@ if (kIsWeb && streamMode) {
                     accumulatedResponse.contains('THINKING_START')) {
                   thinkingDetected = true;
                   _isThinkingPhase = true;
-
+                  _thinkingPhaseStartedAt = DateTime.now();
                   final parsed = _parseThinkingResponse(accumulatedResponse);
                   if (parsed.thinkingProcess.isNotEmpty) {
                     _currentThinkingProcess = parsed.thinkingProcess;
@@ -1671,35 +1748,27 @@ if (kIsWeb && streamMode) {
                   if (parsed.thinkingProcess.isNotEmpty) {
                     _currentThinkingProcess = parsed.thinkingProcess;
                   }
-
                   if (accumulatedResponse.contains('THINKING_END')) {
                     if (_thinkingStopwatch.isRunning) _thinkingStopwatch.stop();
                     _isThinkingComplete = true;
                     _isThinkingPhase = false;
-                    _currentStreamText = parsed.finalResponse;
+                    _currentStreamText = _stripTopicTag(parsed.finalResponse);
                   }
                 } else if (_isThinkingComplete) {
                   final parsed = _parseThinkingResponse(accumulatedResponse);
-                  _currentStreamText = parsed.finalResponse;
+                  _currentStreamText = _stripTopicTag(parsed.finalResponse);
                 }
               } else {
-                _currentStreamText = accumulatedResponse;
+                _currentStreamText = _stripTopicTag(accumulatedResponse);
               }
             });
-
             _scheduleAutoScroll();
           } catch (e) {
-            // CATCH ERRORS IN THE STREAM
-            if (kDebugMode) {
-              print('⚠️ Stream chunk error: $e');
-            }
-            // Don't crash, just continue
+            if (kDebugMode) print('⚠️ Stream chunk error: $e');
           }
         },
         onError: (error) async {
           if (!mounted) return;
-
-          // Check if user cancelled
           if (_isRetryCancelled) {
             setState(() {
               _resetMessageState();
@@ -1707,53 +1776,43 @@ if (kIsWeb && streamMode) {
             });
             return;
           }
-
           final errorMessage = error.toString();
-
-          // Check if this is a quota/resource exhausted error
           final isQuotaError =
               errorMessage.contains('RESOURCE_EXHAUSTED') ||
               errorMessage.contains('quota') ||
               errorMessage.contains('rate limit') ||
               errorMessage.contains('429');
 
-          if (isQuotaError) {
-            // QUOTA ERROR - Show error and DO NOT auto-retry
-            if (mounted) {
-              setState(() {
+          final errorText =
+              isQuotaError
+                  ? '⚠️ API Quota Exceeded\n\n$errorMessage\n\nPlease wait and try again.'
+                  : '❌ Error: $errorMessage\n\nTap Retry to try again.';
+
+          if (mounted) {
+            setState(() {
+              if (_activeErrorIndex != null &&
+                  _activeErrorIndex! < _messages.length &&
+                  _messages[_activeErrorIndex!].isError) {
+                _messages[_activeErrorIndex!] = ChatMessage(
+                  text: errorText,
+                  isUser: false,
+                  timestamp: DateTime.now(),
+                  isError: true,
+                  canRetry: true,
+                );
+              } else {
                 _messages.add(
                   ChatMessage(
-                    text:
-                        '⚠️ API Quota Exceeded\n\n$errorMessage\n\nPlease wait a moment and try again manually.',
+                    text: errorText,
                     isUser: false,
                     timestamp: DateTime.now(),
                     isError: true,
                     canRetry: true,
                   ),
                 );
-                _isStreaming = false;
-                _isSendingMessage = false;
-                _isSendingNotifier.value = false;
-                _resetMessageState();
-              });
-            }
-            return; // Stop here - no auto-retry
-          }
-
-          // For network errors, show error and allow user to retry manually
-          // Do NOT auto-retry - let the user decide
-          if (mounted) {
-            setState(() {
-              _messages.add(
-                ChatMessage(
-                  text:
-                      '❌ Error: $errorMessage\n\nTap Retry to try again manually.',
-                  isUser: false,
-                  timestamp: DateTime.now(),
-                  isError: true,
-                  canRetry: true,
-                ),
-              );
+                _messageKeys.add(GlobalKey());
+                _activeErrorIndex = _messages.length - 1;
+              }
               _isStreaming = false;
               _isSendingMessage = false;
               _isSendingNotifier.value = false;
@@ -1763,9 +1822,7 @@ if (kIsWeb && streamMode) {
         },
         onDone: () async {
           if (!mounted) return;
-
           final parsedResponse = _parseThinkingResponse(accumulatedResponse);
-
           final thinkingText =
               _currentThinkingProcess.isNotEmpty
                   ? _currentThinkingProcess
@@ -1784,9 +1841,38 @@ if (kIsWeb && streamMode) {
                   .replaceAll('THINKING_END', '')
                   .trim();
 
+          final topicRegex = RegExp(r'^\s*\[TOPIC:\s*(.+?)\]\s*\n?');
+          final topicMatch = topicRegex.firstMatch(finalOutput);
+          if (topicMatch != null) {
+            final rawTopic = topicMatch.group(1)?.trim() ?? '';
+            if (rawTopic.isNotEmpty) {
+              final words = rawTopic.split(RegExp(r'\s+'));
+              final capped = words.take(3).join(' ');
+              _currentTopic = capped;
+            }
+            finalOutput = finalOutput.replaceFirst(topicRegex, '').trimLeft();
+          } else if (_currentTopic.isEmpty) {
+            final firstUser = _messages.firstWhere(
+              (m) => m.isUser && m.text.trim().isNotEmpty,
+              orElse:
+                  () => ChatMessage(
+                    text: '',
+                    isUser: true,
+                    timestamp: DateTime.now(),
+                  ),
+            );
+            if (firstUser.text.isNotEmpty) {
+              final words = firstUser.text.trim().split(RegExp(r'\s+'));
+              _currentTopic = words.take(3).join(' ');
+            }
+          }
+
           final bool seemsIncomplete = _checkIfResponseIncomplete(finalOutput);
 
           setState(() {
+            // Success -> clear error marker.
+            _activeErrorIndex = null;
+
             if (seemsIncomplete) {
               _lastIncompleteResponse = finalOutput;
               _messages.add(
@@ -1812,6 +1898,7 @@ if (kIsWeb && streamMode) {
                 ),
               );
             }
+            _messageKeys.add(GlobalKey());
             _resetMessageState();
             _retryCount = 0;
             _lastFailedPrompt = null;
@@ -1824,10 +1911,8 @@ if (kIsWeb && streamMode) {
       );
     } catch (e) {
       if (!mounted) return;
-
       final partialText = _partialResponseOnError;
       final hasPartial = _hasPartialResponse && partialText.isNotEmpty;
-
       setState(() {
         if (hasPartial) {
           _messages.add(
@@ -1838,18 +1923,33 @@ if (kIsWeb && streamMode) {
               isIncomplete: true,
             ),
           );
+          _messageKeys.add(GlobalKey());
         }
-
-        _messages.add(
-          ChatMessage(
-            text:
-                'Failed to get response: ${e.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry to try again." : "Max retries reached."}',
+        final errorText =
+            'Failed to get response: ${e.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry." : "Max retries reached."}';
+        if (_activeErrorIndex != null &&
+            _activeErrorIndex! < _messages.length &&
+            _messages[_activeErrorIndex!].isError) {
+          _messages[_activeErrorIndex!] = ChatMessage(
+            text: errorText,
             isUser: false,
             timestamp: DateTime.now(),
             isError: true,
             canRetry: _retryCount < _maxRetries,
-          ),
-        );
+          );
+        } else {
+          _messages.add(
+            ChatMessage(
+              text: errorText,
+              isUser: false,
+              timestamp: DateTime.now(),
+              isError: true,
+              canRetry: _retryCount < _maxRetries,
+            ),
+          );
+          _messageKeys.add(GlobalKey());
+          _activeErrorIndex = _messages.length - 1;
+        }
         _resetMessageState();
       });
     }
@@ -1859,14 +1959,19 @@ if (kIsWeb && streamMode) {
     final List<Uint8List> compressed = [];
     for (var image in images) {
       try {
-        // Already compressed when picked (imageQuality: 85)
-        // But we can further compress if needed
-        compressed.add(image);
-      } catch (e) {
-        if (kDebugMode) {
-          print('⚠️ Image compression error: $e');
+        final codec = await ui.instantiateImageCodec(image, targetWidth: 1024);
+        final frame = await codec.getNextFrame();
+        final byteData = await frame.image.toByteData(
+          format: ui.ImageByteFormat.png,
+        );
+        if (byteData != null) {
+          compressed.add(byteData.buffer.asUint8List());
+        } else {
+          compressed.add(image);
         }
-        compressed.add(image); // Use original if compression fails
+      } catch (e) {
+        if (kDebugMode) print('⚠️ Image compression error: $e');
+        compressed.add(image);
       }
     }
     return compressed;
@@ -1880,6 +1985,7 @@ if (kIsWeb && streamMode) {
     _currentThinkingProcess = '';
     _isThinkingComplete = false;
     _isThinkingPhase = false;
+    _thinkingPhaseStartedAt = null;
     _thinkingStopwatch.reset();
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
@@ -1896,7 +2002,6 @@ if (kIsWeb && streamMode) {
 
   void _scheduleAutoScroll() {
     if (!_enableAutoScroll || _userScrolledUp) return;
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _scrollController.hasClients) {
         try {
@@ -1910,7 +2015,6 @@ if (kIsWeb && streamMode) {
 
   void _scrollToBottom() {
     if (!_scrollController.hasClients) return;
-
     void jumpOnce() {
       if (!mounted || !_scrollController.hasClients) return;
       final max = _scrollController.position.maxScrollExtent;
@@ -1924,7 +2028,6 @@ if (kIsWeb && streamMode) {
     jumpOnce();
     Future.delayed(const Duration(milliseconds: 150), jumpOnce);
     Future.delayed(const Duration(milliseconds: 350), jumpOnce);
-
     setState(() {
       _showScrollButton = false;
       _userScrolledUp = false;
@@ -1933,7 +2036,6 @@ if (kIsWeb && streamMode) {
 
   Widget _buildScrollToBottomButton() {
     if (!_showScrollButton) return const SizedBox.shrink();
-
     return Positioned(
       bottom: 80,
       left: 12,
@@ -1972,26 +2074,23 @@ if (kIsWeb && streamMode) {
         _interestsController.text = profile.interests;
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error loading user profile: $e');
-      }
+      if (kDebugMode) print('❌ Error loading user profile: $e');
     }
   }
 
   Future<void> _saveUserProfile() async {
     try {
       await _userProfileBox.clear();
-
       final profile =
           UserProfileHive()
             ..name = _nameController.text.trim()
             ..interests = _interestsController.text.trim()
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now();
-
       await _userProfileBox.add(profile);
-
+      _profileVersion.value = _profileVersion.value + 1;
       if (mounted) {
+        setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Profile saved successfully!'),
@@ -1999,14 +2098,10 @@ if (kIsWeb && streamMode) {
             duration: Duration(seconds: 2),
           ),
         );
-
         Navigator.of(context).pop();
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error saving user profile: $e');
-      }
-
+      if (kDebugMode) print('❌ Error saving user profile: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2026,11 +2121,10 @@ if (kIsWeb && streamMode) {
     _currentThinkingProcess = '';
     _isThinkingComplete = false;
     _isThinkingPhase = false;
+    _thinkingPhaseStartedAt = null;
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
-
-    // Also reset sending state if still true
-    if (_isSendingMessage) {
+    if (_isSendingMessage && mounted) {
       setState(() {
         _isSendingMessage = false;
         _isSendingNotifier.value = false;
@@ -2056,7 +2150,6 @@ if (kIsWeb && streamMode) {
   Future<void> _showPlatformSelectionScreen() async {
     await _cancelCurrentStream();
     await _saveConversation();
-
     if (mounted) {
       setState(() {
         _showPlatformSelection = true;
@@ -2071,6 +2164,7 @@ if (kIsWeb && streamMode) {
         _retryCount = 0;
         _lastFailedPrompt = null;
         _lastFailedImages = null;
+        _activeErrorIndex = null;
       });
     }
   }
@@ -2080,58 +2174,14 @@ if (kIsWeb && streamMode) {
       context,
       MaterialPageRoute(
         builder:
-            (context) => FutureBuilder(
-              future: _buildChatHistoryScreen(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Scaffold(
-                    backgroundColor: Colors.black,
-                    body: Center(
-                      child: CircularProgressIndicator(color: Colors.orange),
-                    ),
-                  );
-                }
-                return snapshot.data ?? const SizedBox.shrink();
-              },
-            ),
+            (context) =>
+                _ChatHistoryScreen(buildHistory: _buildChatHistoryScreen),
         fullscreenDialog: true,
       ),
     );
   }
 
-  Future<Widget> _buildChatHistoryScreen() async {
-    final allConversations =
-        _conversationBox.values
-            .where((c) => c.modelUsed == _selectedModel)
-            .toList()
-          ..sort(
-            (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-          );
-
-   // Silently remove duplicate conversations with same title (keep oldest)
-// No confirmation dialog is shown
-final uniqueConversations = <String, ConversationHive>{};
-for (final conv in allConversations) {
-  final preview = _getConversationPreview(conv.id);
-  if (!uniqueConversations.containsKey(preview)) {
-    uniqueConversations[preview] = conv;
-  } else {
-    // Silent delete – no dialog
-    final messagesToDelete = _chatBox.values
-        .where((msg) => msg.conversationId == conv.id)
-        .toList();
-    for (final msg in messagesToDelete) {
-      await msg.delete();
-    }
-    await conv.delete();
-  }
-}
-
-    final conversations =
-        uniqueConversations.values.toList()..sort(
-          (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-        );
-
+  Widget _buildChatHistoryScreen() {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -2144,100 +2194,137 @@ for (final conv in allConversations) {
         ),
         title: const Text('Chat History'),
       ),
-      body:
-          conversations.isEmpty
-              ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.history, color: Colors.grey.shade700, size: 56),
-                    const SizedBox(height: 12),
-                    Text(
-                      'No saved chats for this model yet',
-                      style: TextStyle(
-                        color: Colors.grey.shade500,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-              : ListView.builder(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                itemCount: conversations.length,
-                itemBuilder: (context, index) {
-                  final conversation = conversations[index];
-                  final preview = _getConversationPreview(conversation.id);
-
-                  return Card(
-                    color: Colors.grey.shade900,
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 6,
-                      ),
-                      leading: const CircleAvatar(
-                        backgroundColor: Colors.blueGrey,
-                        radius: 17,
-                        child: Icon(
-                          Icons.chat_bubble_outline,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ),
-                      title: Text(
-                        preview,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '${conversation.messageCount} messages • ${DateFormat('MMM d, HH:mm').format(conversation.lastMessageTimestamp)}',
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: Colors.redAccent,
-                              size: 18,
-                            ),
-                            onPressed:
-                                () => _deleteConversation(conversation.id),
-                          ),
-                          const Icon(
-                            Icons.arrow_forward_ios,
-                            color: Colors.white38,
-                            size: 14,
-                          ),
-                        ],
-                      ),
-                      onTap: () async {
-                        Navigator.of(context).pop();
-                        await _loadSpecificConversation(conversation.id);
-                      },
-                    ),
-                  );
-                },
+      body: FutureBuilder<List<ConversationHive>>(
+        future: _loadUniqueConversations(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.orange),
+            );
+          }
+          final conversations = snapshot.data ?? const <ConversationHive>[];
+          if (conversations.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.history, color: Colors.grey.shade700, size: 56),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No saved chats for this model yet',
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                  ),
+                ],
               ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            itemCount: conversations.length,
+            itemBuilder: (context, index) {
+              final conversation = conversations[index];
+              final preview = _getConversationPreview(conversation.id);
+              final title =
+                  conversation.title?.isNotEmpty == true
+                      ? conversation.title!
+                      : preview;
+
+              return Card(
+                color: Colors.grey.shade900,
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 6,
+                  ),
+                  leading: const CircleAvatar(
+                    backgroundColor: Colors.blueGrey,
+                    radius: 17,
+                    child: Icon(
+                      Icons.chat_bubble_outline,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                  title: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '${conversation.messageCount} messages • ${DateFormat('MMM d, HH:mm').format(conversation.lastMessageTimestamp)}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.redAccent,
+                          size: 18,
+                        ),
+                        onPressed: () => _deleteConversation(conversation.id),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        color: Colors.white38,
+                        size: 14,
+                      ),
+                    ],
+                  ),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _loadSpecificConversation(conversation.id);
+                  },
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<List<ConversationHive>> _loadUniqueConversations() async {
+    final allConversations =
+        _conversationBox.values
+            .where((c) => c.modelUsed == _selectedModel)
+            .toList()
+          ..sort(
+            (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
+          );
+
+    final uniqueConversations = <String, ConversationHive>{};
+    for (final conv in allConversations) {
+      final preview = _getConversationPreview(conv.id);
+      if (!uniqueConversations.containsKey(preview)) {
+        uniqueConversations[preview] = conv;
+      } else {
+        final messagesToDelete =
+            _chatBox.values
+                .where((msg) => msg.conversationId == conv.id)
+                .toList();
+        for (final msg in messagesToDelete) {
+          await msg.delete();
+        }
+        await conv.delete();
+      }
+    }
+
+    return uniqueConversations.values.toList()..sort(
+      (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
     );
   }
 
@@ -2251,7 +2338,7 @@ for (final conv in allConversations) {
       ),
       builder:
           (context) => StatefulBuilder(
-            builder: (context, setState) {
+            builder: (context, sheetSetState) {
               return Container(
                 padding: const EdgeInsets.all(20),
                 child: SingleChildScrollView(
@@ -2288,9 +2375,7 @@ for (final conv in allConversations) {
                               color: Colors.white54,
                               size: 16,
                             ),
-                            onTap: () {
-                              Navigator.pop(context);
-                            },
+                            onTap: () => Navigator.pop(context),
                           ),
                           SwitchListTile(
                             title: const Text(
@@ -2304,16 +2389,10 @@ for (final conv in allConversations) {
                             value: _enableThinking,
                             activeColor: Colors.orange,
                             onChanged: (value) {
-                              setState(() {
-                                _enableThinking = value;
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  this.setState(() {
-                                    _enableThinking = value;
-                                  });
-                                }
-                              });
+                              sheetSetState(() => _enableThinking = value);
+                              if (mounted) {
+                                setState(() => _enableThinking = value);
+                              }
                             },
                           ),
                         ],
@@ -2364,27 +2443,36 @@ for (final conv in allConversations) {
                                   activeColor: Colors.orange,
                                   inactiveColor: Colors.grey.shade700,
                                   onChanged: (value) {
-                                    setState(() {
-                                      _temperature = value;
-                                    });
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                          if (mounted) {
-                                            this.setState(() {
-                                              _temperature = value;
-                                            });
-                                          }
-                                        });
+                                    sheetSetState(() => _temperature = value);
+                                    if (mounted) {
+                                      setState(() => _temperature = value);
+                                    }
                                   },
                                 ),
                                 Row(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceEvenly,
                                   children: [
-                                    _buildPresetChip('Precise', 0.1, setState),
-                                    _buildPresetChip('Balanced', 0.5, setState),
-                                    _buildPresetChip('Creative', 0.8, setState),
-                                    _buildPresetChip('Wild', 1.0, setState),
+                                    _buildPresetChip(
+                                      'Precise',
+                                      0.1,
+                                      sheetSetState,
+                                    ),
+                                    _buildPresetChip(
+                                      'Balanced',
+                                      0.5,
+                                      sheetSetState,
+                                    ),
+                                    _buildPresetChip(
+                                      'Creative',
+                                      0.8,
+                                      sheetSetState,
+                                    ),
+                                    _buildPresetChip(
+                                      'Wild',
+                                      1.0,
+                                      sheetSetState,
+                                    ),
                                   ],
                                 ),
                               ],
@@ -2395,126 +2483,28 @@ for (final conv in allConversations) {
                       const SizedBox(height: 16),
 
                       _buildSettingsSection(
-                        title: 'Chat Settings',
+                        title: '🌐 Accuracy',
                         children: [
                           SwitchListTile(
                             title: const Text(
-                              'Auto-scroll',
+                              'Always Search for Accuracy',
                               style: TextStyle(color: Colors.white),
                             ),
                             subtitle: const Text(
-                              'Automatically scroll to new messages',
+                              'Force Google Search grounding on every message.',
                               style: TextStyle(color: Colors.white54),
                             ),
-                            value: _enableAutoScroll,
-                            activeColor: Colors.orange,
+                            value: _alwaysSearchForAccuracy,
+                            activeColor: Colors.green,
                             onChanged: (value) {
-                              setState(() {
-                                _enableAutoScroll = value;
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  this.setState(() {
-                                    _enableAutoScroll = value;
-                                  });
-                                }
-                              });
-                            },
-                          ),
-                          SwitchListTile(
-                            title: const Text(
-                              'Streaming',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: const Text(
-                              'Enable real-time response streaming (off = full reply appears at once)',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            value: _enableStreaming,
-                            activeColor: Colors.orange,
-                            onChanged: (value) {
-                              setState(() {
-                                _enableStreaming = value;
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  this.setState(() {
-                                    _enableStreaming = value;
-                                  });
-                                }
-                              });
-                            },
-                          ),
-                          SwitchListTile(
-                            title: const Text(
-                              'Chat History',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: const Text(
-                              'Save and load chat conversations',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            value: _enableHistory,
-                            activeColor: Colors.orange,
-                            onChanged: (value) {
-                              setState(() {
-                                _enableHistory = value;
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  this.setState(() {
-                                    _enableHistory = value;
-                                    if (value) {
-                                      _loadChatHistoryForModel(_selectedModel);
-                                    } else {
-                                      _messages.clear();
-                                    }
-                                  });
-                                }
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      _buildSettingsSection(
-                        title: '🗂️ Chat Tools',
-                        children: [
-                          ListTile(
-                            leading: const Icon(
-                              Icons.history,
-                              color: Colors.blueAccent,
-                            ),
-                            title: const Text(
-                              'Chat History',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: const Text(
-                              'Open a saved conversation',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            onTap: () {
-                              Navigator.pop(context);
-                              _openChatHistory();
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(
-                              Icons.add_comment_outlined,
-                              color: Colors.green,
-                            ),
-                            title: const Text(
-                              'New Chat',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: const Text(
-                              'Start a fresh conversation',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            onTap: () {
-                              Navigator.pop(context);
-                              _startNewChat();
+                              sheetSetState(
+                                () => _alwaysSearchForAccuracy = value,
+                              );
+                              if (mounted) {
+                                setState(
+                                  () => _alwaysSearchForAccuracy = value,
+                                );
+                              }
                             },
                           ),
                         ],
@@ -2536,16 +2526,10 @@ for (final conv in allConversations) {
                             value: _enableSmartContext,
                             activeColor: Colors.green,
                             onChanged: (value) {
-                              setState(() {
-                                _enableSmartContext = value;
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  this.setState(() {
-                                    _enableSmartContext = value;
-                                  });
-                                }
-                              });
+                              sheetSetState(() => _enableSmartContext = value);
+                              if (mounted) {
+                                setState(() => _enableSmartContext = value);
+                              }
                             },
                           ),
                           ListTile(
@@ -2554,7 +2538,7 @@ for (final conv in allConversations) {
                               style: TextStyle(color: Colors.white),
                             ),
                             subtitle: Text(
-                              '$_maxContextMessages messages sent to the AI as memory',
+                              '$_maxContextMessages messages sent to the AI',
                               style: const TextStyle(color: Colors.white54),
                             ),
                             trailing: SizedBox(
@@ -2567,91 +2551,14 @@ for (final conv in allConversations) {
                                 activeColor: Colors.green,
                                 inactiveColor: Colors.grey.shade700,
                                 onChanged: (value) {
-                                  setState(() {
-                                    _maxContextMessages = value.toInt();
-                                  });
-                                  WidgetsBinding.instance.addPostFrameCallback((
-                                    _,
-                                  ) {
-                                    if (mounted) {
-                                      this.setState(() {
-                                        _maxContextMessages = value.toInt();
-                                      });
-                                    }
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      _buildSettingsSection(
-                        title: 'Input Settings',
-                        children: [
-                          SwitchListTile(
-                            title: const Text(
-                              'Image Upload',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: const Text(
-                              'Allow uploading images to AI',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            value: _enableImageUpload,
-                            activeColor: Colors.orange,
-                            onChanged: (value) {
-                              setState(() {
-                                _enableImageUpload = value;
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  this.setState(() {
-                                    _enableImageUpload = value;
-                                  });
-                                }
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      _buildSettingsSection(
-                        title: 'AI Settings',
-                        children: [
-                          ListTile(
-                            title: const Text(
-                              'Temperature',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              '${_temperature.toStringAsFixed(1)} (Higher = more creative)',
-                              style: const TextStyle(color: Colors.white54),
-                            ),
-                            trailing: SizedBox(
-                              width: 150,
-                              child: Slider(
-                                value: _temperature,
-                                min: 0.0,
-                                max: 1.0,
-                                divisions: 10,
-                                activeColor: Colors.orange,
-                                inactiveColor: Colors.grey.shade700,
-                                onChanged: (value) {
-                                  setState(() {
-                                    _temperature = value;
-                                  });
-                                  WidgetsBinding.instance.addPostFrameCallback((
-                                    _,
-                                  ) {
-                                    if (mounted) {
-                                      this.setState(() {
-                                        _temperature = value;
-                                      });
-                                    }
-                                  });
+                                  sheetSetState(
+                                    () => _maxContextMessages = value.toInt(),
+                                  );
+                                  if (mounted) {
+                                    setState(
+                                      () => _maxContextMessages = value.toInt(),
+                                    );
+                                  }
                                 },
                               ),
                             ),
@@ -2695,16 +2602,8 @@ for (final conv in allConversations) {
     final isActive = (_temperature - value).abs() < 0.05;
     return GestureDetector(
       onTap: () {
-        sheetSetState(() {
-          _temperature = value;
-        });
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            setState(() {
-              _temperature = value;
-            });
-          }
-        });
+        sheetSetState(() => _temperature = value);
+        if (mounted) setState(() => _temperature = value);
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -2767,14 +2666,11 @@ for (final conv in allConversations) {
 
   Future<void> _loadUrl(String url) async {
     await _cancelCurrentStream();
-
     if (url == 'gemini://api') {
-      // Always check if proxy is available
       if (!_geminiInitialized || _geminiApiKey != 'proxy') {
         _showApiErrorDialog();
         return;
       }
-
       if (mounted) {
         setState(() {
           _showPlatformSelection = false;
@@ -2787,7 +2683,8 @@ for (final conv in allConversations) {
           _retryCount = 0;
           _lastFailedPrompt = null;
           _lastFailedImages = null;
-         _updateSendButtonState();
+          _activeErrorIndex = null;
+          _updateSendButtonState();
         });
       }
     } else {
@@ -2801,11 +2698,13 @@ for (final conv in allConversations) {
           _isThinkingComplete = false;
           _isThinkingPhase = false;
           _lastIncompleteResponse = '';
-          _isLoading = !kIsWeb;
+          _isLoading = _isMobile;
           _updateSendButtonState();
         });
       }
-      await _controller.loadRequest(Uri.parse(url));
+      if (_isMobile) {
+        await _controller.loadRequest(Uri.parse(url));
+      }
     }
   }
 
@@ -2868,7 +2767,7 @@ for (final conv in allConversations) {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Help me get to know you better for more personalized conversations!',
+              'Help me get to know you better!',
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
             const SizedBox(height: 30),
@@ -2919,8 +2818,7 @@ for (final conv in allConversations) {
               maxLines: null,
               keyboardType: TextInputType.multiline,
               decoration: InputDecoration(
-                hintText:
-                    'What topics are you interested in?\nExample: technology, science, art, sports, gaming, music, movies, books, travel, food, fitness, business, education...',
+                hintText: 'What topics are you interested in?',
                 hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -2938,15 +2836,6 @@ for (final conv in allConversations) {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            const Text(
-              'You can write as much as you want here. The more details you provide, the better I can personalize our conversations.',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
             const SizedBox(height: 50),
             Container(
               padding: const EdgeInsets.all(16),
@@ -2961,7 +2850,7 @@ for (final conv in allConversations) {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'This information is stored locally on your device and helps me personalize our conversations. It is never sent to any external servers.',
+                      'This information is stored locally on your device. It is never sent to any external servers.',
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ),
@@ -2974,128 +2863,18 @@ for (final conv in allConversations) {
     );
   }
 
-  Future<void> _clearChatHistory() async {
-    final modelName =
-        _availableModels.firstWhere((m) => m.id == _selectedModel).name;
-
-    final shouldClear = await showDialog<bool>(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Clear Chat History'),
-            content: Text(
-              'Are you sure you want to clear chat history for $modelName? This cannot be undone.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Clear', style: TextStyle(color: Colors.red)),
-              ),
-            ],
-          ),
-    );
-
-    if (shouldClear != true) return;
-
-    try {
-      final conversations =
-          _conversationBox.values
-              .where((conv) => conv.modelUsed == _selectedModel)
-              .toList();
-
-      for (final conv in conversations) {
-        final messagesToDelete =
-            _chatBox.values
-                .where((msg) => msg.conversationId == conv.id)
-                .toList();
-
-        for (final msg in messagesToDelete) {
-          await msg.delete();
-        }
-
-        await conv.delete();
-      }
-
-      if (mounted) {
-        setState(() {
-          _messages.clear();
-          _currentStreamText = '';
-          _currentThinkingProcess = '';
-          _isThinkingComplete = false;
-          _isThinkingPhase = false;
-          _lastIncompleteResponse = '';
-          _retryCount = 0;
-          _lastFailedPrompt = null;
-          _lastFailedImages = null;
-          _activeConversationId = null;
-        });
-      }
-
-      if (kDebugMode) {
-        print('✅ Cleared chat history for model: $_selectedModel');
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cleared chat history for $modelName'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error clearing chat history: $e');
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to clear chat history'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    }
-  }
-
-  void _shareConversation() async {
-    if (_messages.isEmpty) return;
-
-    final conversationText = _messages
-        .map((msg) {
-          final sender = msg.isUser ? 'You' : 'Gemini';
-          final time = DateFormat('HH:mm').format(msg.timestamp);
-          return '[$time] $sender: ${msg.text}';
-        })
-        .join('\n\n');
-
-    final params = ShareParams(
-      text: conversationText,
-      subject: 'My AI Conversation',
-    );
-
-    await SharePlus.instance.share(params);
-  }
-
   void _initializeWebView() {
-    late final PlatformWebViewControllerCreationParams params;
+    if (kIsWeb) {
+      _controller = WebViewController();
+      return;
+    }
 
-    if (!kIsWeb) {
-      if (WebViewPlatform.instance is WebKitWebViewPlatform) {
-        params = WebKitWebViewControllerCreationParams(
-          allowsInlineMediaPlayback: true,
-          mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
-        );
-      } else {
-        params = const PlatformWebViewControllerCreationParams();
-      }
+    late final PlatformWebViewControllerCreationParams params;
+    if (WebViewPlatform.instance is WebKitWebViewPlatform) {
+      params = WebKitWebViewControllerCreationParams(
+        allowsInlineMediaPlayback: true,
+        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+      );
     } else {
       params = const PlatformWebViewControllerCreationParams();
     }
@@ -3103,123 +2882,108 @@ for (final conv in allConversations) {
     final WebViewController controller =
         WebViewController.fromPlatformCreationParams(params);
 
-    if (!kIsWeb) {
-      controller.setJavaScriptMode(JavaScriptMode.unrestricted);
-      controller.setBackgroundColor(const Color(0x00000000));
-    }
+    controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+    controller.setBackgroundColor(const Color(0x00000000));
 
-    if (!kIsWeb) {
-      controller.setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int progress) {
-            if (mounted) {
-              setState(() {
-                _isLoading = progress < 100;
-              });
-            }
-          },
-          onPageStarted: (String url) {
-            if (mounted) {
-              setState(() {
-                _isLoading = true;
-              });
-            }
-          },
-          onPageFinished: (String url) {
-            if (mounted) {
-              setState(() {
-                _isLoading = false;
-              });
-            }
-            _applyAccuracySettings(url);
-          },
-          onWebResourceError: (WebResourceError error) {
-            if (mounted) {
-              setState(() {
-                _isLoading = false;
-              });
-            }
-            if (kDebugMode) {
-              print('WebView Error: ${error.description}');
-            }
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            return NavigationDecision.navigate;
-          },
-          onUrlChange: (UrlChange change) {
-            if (kDebugMode) {
-              print('URL changed to: ${change.url}');
-            }
-          },
-        ),
-      );
-    }
+    controller.setNavigationDelegate(
+      NavigationDelegate(
+        onProgress: (int progress) {
+          if (mounted) setState(() => _isLoading = progress < 100);
+        },
+        onPageStarted: (String url) {
+          if (mounted) setState(() => _isLoading = true);
+        },
+        onPageFinished: (String url) {
+          if (mounted) setState(() => _isLoading = false);
+          _applyAccuracySettings(url);
+        },
+        onWebResourceError: (WebResourceError error) {
+          if (mounted) setState(() => _isLoading = false);
+          if (kDebugMode) print('WebView Error: ${error.description}');
+        },
+        onNavigationRequest: (NavigationRequest request) {
+          return _shouldStayInWebView(request.url)
+              ? NavigationDecision.navigate
+              : NavigationDecision.prevent;
+        },
+        onUrlChange: (UrlChange change) {
+          if (kDebugMode) print('URL changed to: ${change.url}');
+        },
+      ),
+    );
 
-    if (!kIsWeb && controller.platform is AndroidWebViewController) {
+    if (controller.platform is AndroidWebViewController) {
       AndroidWebViewController.enableDebugging(true);
       (controller.platform as AndroidWebViewController)
           .setMediaPlaybackRequiresUserGesture(false);
     }
 
     _controller = controller;
+    _setUserAgent();
+  }
 
-    if (!kIsWeb) {
-      _setUserAgent();
+  bool _shouldStayInWebView(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final host = uri.host.toLowerCase();
+      const allowed = <String>[
+        'chat.openai.com',
+        'chatgpt.com',
+        'gemini.google.com',
+        'claude.ai',
+        'chat.deepseek.com',
+        'blackbox.ai',
+        'google.com',
+        'accounts.google.com',
+        'appleid.apple.com',
+        'login.microsoftonline.com',
+        'openai.com',
+        'anthropic.com',
+        'deepseek.com',
+      ];
+      return allowed.any(
+        (domain) => host == domain || host.endsWith('.$domain'),
+      );
+    } catch (_) {
+      return true;
     }
   }
 
   void _applyAccuracySettings(String url) {
     if (kIsWeb) return;
-
     final jsCode = """
-    function setAccuracySettings() {
-      document.body.style.backgroundColor = '#000000';
-      document.body.style.color = '#ffffff';
-      
-      if (window.location.href.includes('chat.openai.com')) {
-        setTimeout(() => {
-          const preciseElements = document.querySelectorAll('[class*="precise"], [class*="accurate"], [class*="temperature"]');
-          preciseElements.forEach(el => {
-            if (el.textContent?.toLowerCase().includes('precise') || 
-                el.textContent?.toLowerCase().includes('accurate')) {
-              el.click();
-            }
-          });
-        }, 2000);
+    (function() {
+      function setAccuracySettings() {
+        document.body.style.backgroundColor = '#000000';
+        document.body.style.color = '#ffffff';
       }
-    }
-    
-    setAccuracySettings();
-    
-    const observer = new MutationObserver(setAccuracySettings);
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-    });
+      setAccuracySettings();
+      if (!window.__accuracyObserverInstalled) {
+        window.__accuracyObserverInstalled = true;
+        const observer = new MutationObserver(setAccuracySettings);
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+        });
+      }
+    })();
   """;
-
     try {
       _controller.runJavaScript(jsCode);
     } catch (e) {
-      if (kDebugMode) {
-        print('Failed to run JavaScript: $e');
-      }
+      if (kDebugMode) print('Failed to run JavaScript: $e');
     }
   }
 
   void _setUserAgent() async {
     if (kIsWeb) return;
-
     const desktopUserAgent =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-
     try {
       await _controller.setUserAgent(desktopUserAgent);
     } catch (e) {
-      if (kDebugMode) {
-        print('Failed to set user agent: $e');
-      }
+      if (kDebugMode) print('Failed to set user agent: $e');
     }
   }
 
@@ -3328,6 +3092,349 @@ for (final conv in allConversations) {
     );
   }
 
+  /// Jump dialog with live suggestions.
+  Future<void> _showJumpToTurnDialog() async {
+    final controller = TextEditingController();
+    final userTurns = <int, String>{};
+    int turn = 0;
+    for (final m in _messages) {
+      if (m.isUser) {
+        turn++;
+        final preview =
+            m.text.trim().length > 40
+                ? '${m.text.trim().substring(0, 40)}...'
+                : m.text.trim();
+        userTurns[turn] = preview;
+      }
+    }
+
+    if (userTurns.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No turns yet'),
+          backgroundColor: Colors.blueGrey,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, dialogSetState) {
+            final query = controller.text.trim();
+            final filtered = <int, String>{};
+            if (query.isEmpty) {
+              filtered.addAll(userTurns);
+            } else {
+              for (final entry in userTurns.entries) {
+                if (entry.key.toString().startsWith(query) ||
+                    entry.value.toLowerCase().contains(query.toLowerCase())) {
+                  filtered[entry.key] = entry.value;
+                }
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: Colors.grey.shade900,
+              title: const Text(
+                'Jump to turn',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        hintText: 'Type a number or keyword...',
+                        hintStyle: TextStyle(color: Colors.white54),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.white24),
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.orange),
+                        ),
+                      ),
+                      onChanged: (_) => dialogSetState(() {}),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child:
+                          filtered.isEmpty
+                              ? const Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: Text(
+                                  'No matching turns',
+                                  style: TextStyle(color: Colors.white54),
+                                ),
+                              )
+                              : ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: filtered.length,
+                                itemBuilder: (context, index) {
+                                  final entry = filtered.entries.elementAt(
+                                    index,
+                                  );
+                                  return ListTile(
+                                    dense: true,
+                                    leading: CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: Colors.lightBlue,
+                                      child: Text(
+                                        '${entry.key}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      entry.value,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    onTap:
+                                        () => Navigator.pop(context, entry.key),
+                                  );
+                                },
+                              ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || result == null) return;
+    await _jumpToTurn(result);
+  }
+
+  Future<void> _jumpToTurn(int turnNumber) async {
+    if (turnNumber < 1) return;
+    int targetIndex = -1;
+    int seen = 0;
+    for (int i = 0; i < _messages.length; i++) {
+      if (_messages[i].isUser) {
+        seen++;
+        if (seen == turnNumber) {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+    if (targetIndex < 0) return;
+
+    _userScrolledUp = false;
+    _showScrollButton = false;
+
+    if (targetIndex < _messageKeys.length) {
+      final key = _messageKeys[targetIndex];
+      final ctx = key.currentContext;
+      if (ctx != null) {
+        await Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.02,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOut,
+        );
+        if (!mounted) return;
+        setState(() => _currentVisibleTurn = turnNumber);
+        return;
+      }
+    }
+
+    if (!_scrollController.hasClients) return;
+    final max = _scrollController.position.maxScrollExtent;
+    final fraction = (targetIndex / (_messages.isEmpty ? 1 : _messages.length))
+        .clamp(0.0, 1.0);
+    await _scrollController.animateTo(
+      max * fraction,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+    );
+    if (mounted) setState(() => _currentVisibleTurn = turnNumber);
+  }
+
+  Widget _buildHeaderChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withAlpha(20),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color, width: 1),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The header strip. Chips rotate INSTANTLY every 5 minutes:
+  /// the first chip disappears, everything shifts left, first goes
+  /// to the end. No animation.
+  Widget _buildHeaderStrip() {
+    final modelName =
+        _availableModels.firstWhere((m) => m.id == _selectedModel).name;
+    final topicLabel = _topicForTurn(_currentVisibleTurn);
+
+    // Order matters. Jump is between New and History.
+    final chips = <Widget>[
+      _buildHeaderChip(
+        icon: Icons.model_training,
+        label: modelName,
+        color: Colors.orange,
+        onTap: () {},
+      ),
+      _buildHeaderChip(
+        icon: Icons.topic_outlined,
+        label: topicLabel,
+        color: Colors.amberAccent,
+        onTap: () {},
+      ),
+      _buildHeaderChip(
+        icon: _enableThinking ? Icons.psychology : Icons.flash_on,
+        label: _enableThinking ? 'Thinking' : 'Fast',
+        color: _enableThinking ? Colors.deepOrange : Colors.blue,
+        onTap: () {
+          setState(() => _enableThinking = !_enableThinking);
+        },
+      ),
+      _buildHeaderChip(
+        icon: Icons.thermostat,
+        label: 'T:${_temperature.toStringAsFixed(1)}',
+        color: Colors.lightBlue,
+        onTap: () => _showSettings(),
+      ),
+      _buildHeaderChip(
+        icon: Icons.memory,
+        label: 'Ctx:$_maxContextMessages',
+        color: Colors.green,
+        onTap: () => _showSettings(),
+      ),
+      _buildHeaderChip(
+        icon: Icons.add_comment_outlined,
+        label: 'New',
+        color: Colors.greenAccent,
+        onTap: _startNewChat,
+      ),
+      _buildHeaderChip(
+        icon: Icons.search,
+        label: 'Jump',
+        color: Colors.tealAccent,
+        onTap: _showJumpToTurnDialog,
+      ),
+      _buildHeaderChip(
+        icon: Icons.history,
+        label: 'History',
+        color: Colors.purpleAccent,
+        onTap: _openChatHistory,
+      ),
+      _buildHeaderChip(
+        icon: Icons.settings,
+        label: 'Settings',
+        color: Colors.brown,
+        onTap: _showSettings,
+      ),
+      _buildHeaderChip(
+        icon: Icons.person,
+        label: 'Profile',
+        color: Colors.lightGreen,
+        onTap: _showProfileDialog,
+      ),
+      
+    ];
+
+    // Apply rotation: chips shifted left by _headerRotation.
+    final rotated = <Widget>[];
+    for (int i = 0; i < chips.length; i++) {
+      rotated.add(chips[(_headerRotation + i) % chips.length]);
+    }
+
+    return Container(
+      height: 34,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      color: Colors.grey.shade900,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        children: rotated,
+      ),
+    );
+  }
+
+  /// "Clear" chip — only clears the *current* conversation, not all
+  /// history. So the user can't accidentally lose other chats.
+  Future<void> _confirmClearCurrentChat() async {
+    if (_messages.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Clear this chat?'),
+            content: const Text(
+              'This clears the current conversation only. Other saved chats remain untouched.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Clear', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) return;
+    await _startNewChat();
+  }
+
   Widget _buildGeminiAPIChat() {
     return Scaffold(
       backgroundColor: Colors.black,
@@ -3360,7 +3467,6 @@ for (final conv in allConversations) {
               final currentModel = _availableModels.firstWhere(
                 (m) => m.id == _selectedModel,
               );
-
               return [
                 PopupMenuItem<String>(
                   value: 'header',
@@ -3382,23 +3488,13 @@ for (final conv in allConversations) {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.check_circle,
-                              color: Colors.orange,
-                              size: 16,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              currentModel.name,
-                              style: const TextStyle(
-                                color: Colors.green,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
+                        Text(
+                          currentModel.name,
+                          style: const TextStyle(
+                            color: Colors.green,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         Text(
                           currentModel.description,
@@ -3516,6 +3612,20 @@ for (final conv in allConversations) {
                   ),
                 ),
                 PopupMenuItem<String>(
+                  value: 'jump',
+                  child: ListTile(
+                    leading: const Icon(Icons.search, color: Colors.white),
+                    title: const Text(
+                      'Jump to turn',
+                      style: TextStyle(color: Colors.tealAccent),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showJumpToTurnDialog();
+                    },
+                  ),
+                ),
+                PopupMenuItem<String>(
                   value: 'history',
                   child: ListTile(
                     leading: const Icon(Icons.history, color: Colors.white),
@@ -3563,26 +3673,12 @@ for (final conv in allConversations) {
                   child: ListTile(
                     leading: const Icon(Icons.delete, color: Colors.white),
                     title: const Text(
-                      'Clear Chat',
+                      'Clear this chat',
                       style: TextStyle(color: Colors.red),
                     ),
                     onTap: () {
                       Navigator.pop(context);
-                      _clearChatHistory();
-                    },
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'share',
-                  child: ListTile(
-                    leading: const Icon(Icons.share, color: Colors.white),
-                    title: const Text(
-                      'Share Chat',
-                      style: TextStyle(color: Colors.indigoAccent),
-                    ),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _shareConversation();
+                      _confirmClearCurrentChat();
                     },
                   ),
                 ),
@@ -3594,11 +3690,11 @@ for (final conv in allConversations) {
               } else if (value == 'profile') {
                 _showProfileDialog();
               } else if (value == 'clear') {
-                _clearChatHistory();
-              } else if (value == 'share') {
-                _shareConversation();
+                _confirmClearCurrentChat();
               } else if (value == 'newchat') {
                 _startNewChat();
+              } else if (value == 'jump') {
+                _showJumpToTurnDialog();
               } else if (value == 'history') {
                 _openChatHistory();
               } else if (_availableModels.any((m) => m.id == value)) {
@@ -3617,7 +3713,6 @@ for (final conv in allConversations) {
               child: Column(
                 children: [
                   const SizedBox(height: 24),
-
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 12),
                     height: 250,
@@ -3648,7 +3743,6 @@ for (final conv in allConversations) {
                 ],
               ),
             ),
-          // ========== MAIN CHAT AREA ==========
           Expanded(
             child: GestureDetector(
               onTap: () => FocusScope.of(context).unfocus(),
@@ -3657,277 +3751,7 @@ for (final conv in allConversations) {
                   _webCentered(
                     Column(
                       children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 6,
-                            horizontal: 12,
-                          ),
-                          color: Colors.grey.shade900,
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.withAlpha(20),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.orange,
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.model_training,
-                                      size: 12,
-                                      color: Colors.blueAccent,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      _availableModels
-                                          .firstWhere(
-                                            (m) => m.id == _selectedModel,
-                                          )
-                                          .name,
-                                      style: const TextStyle(
-                                        color: Colors.orange,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _enableThinking = !_enableThinking;
-                                  });
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        _enableThinking
-                                            ? '🤔 Thinking mode ON - Thoughts hidden in dropdown'
-                                            : '⚡ Fast mode ON - All text shown directly',
-                                      ),
-                                      backgroundColor:
-                                          _enableThinking
-                                              ? Colors.blueGrey
-                                              : Colors.blue,
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        _enableThinking
-                                            ? Colors.brown.withAlpha(20)
-                                            : Colors.blue.withAlpha(20),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color:
-                                          _enableThinking
-                                              ? Colors.lightBlue
-                                              : Colors.blue,
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        _enableThinking
-                                            ? Icons.psychology
-                                            : Icons.flash_on,
-                                        size: 10,
-                                        color:
-                                            _enableThinking
-                                                ? Colors.deepOrangeAccent
-                                                : Colors.blue,
-                                      ),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        _enableThinking ? 'Thinking' : 'Fast',
-                                        style: TextStyle(
-                                          color:
-                                              _enableThinking
-                                                  ? Colors.deepOrange
-                                                  : Colors.blue,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.withAlpha(20),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.blue,
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.thermostat,
-                                      size: 10,
-                                      color: Colors.blue,
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      'Temp: ${_temperature.toStringAsFixed(1)}',
-                                      style: const TextStyle(
-                                        color: Colors.blue,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withAlpha(20),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.green,
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.memory,
-                                      size: 10,
-                                      color: Colors.green,
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      'Ctx: $_maxContextMessages',
-                                      style: const TextStyle(
-                                        color: Colors.green,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              const SizedBox(width: 6),
-                              GestureDetector(
-                                onTap: _openChatHistory,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.purple.withAlpha(20),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.purpleAccent,
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: const Row(
-                                    children: [
-                                      Icon(
-                                        Icons.history,
-                                        size: 10,
-                                        color: Colors.purpleAccent,
-                                      ),
-                                      SizedBox(width: 3),
-                                      Text(
-                                        'History',
-                                        style: TextStyle(
-                                          color: Colors.purpleAccent,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                              const Spacer(),
-
-                              if (_enableStreaming)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        _isStreaming
-                                            ? Colors.green.withAlpha(20)
-                                            : Colors.grey.withAlpha(20),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color:
-                                          _isStreaming
-                                              ? Colors.green
-                                              : Colors.grey,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        _isStreaming
-                                            ? Icons.stream
-                                            : Icons.check_circle,
-                                        size: 10,
-                                        color:
-                                            _isStreaming
-                                                ? Colors.green
-                                                : Colors.grey,
-                                      ),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        _isStreaming ? 'Streaming' : 'Ready',
-                                        style: TextStyle(
-                                          color:
-                                              _isStreaming
-                                                  ? Colors.green
-                                                  : Colors.grey,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
+                        _buildHeaderStrip(),
 
                         Expanded(
                           child:
@@ -3968,51 +3792,56 @@ for (final conv in allConversations) {
                                           ),
                                         ),
                                         const SizedBox(height: 16),
-                                        if (_userProfileBox.values.isEmpty)
-                                          GestureDetector(
-                                            onTap: _showProfileDialog,
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 8,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.green.withAlpha(
-                                                  30,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(20),
-                                                border: Border.all(
-                                                  color: Colors.green,
-                                                ),
-                                              ),
-                                              child: const Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Icon(
-                                                    Icons.person_add,
-                                                    color: Colors.green,
-                                                    size: 16,
-                                                  ),
-                                                  SizedBox(width: 8),
-                                                  Text(
-                                                    'Set up your profile',
-                                                    style: TextStyle(
+                                        ValueListenableBuilder<int>(
+                                          valueListenable: _profileVersion,
+                                          builder: (context, _, __) {
+                                            if (_userProfileBox
+                                                .values
+                                                .isEmpty) {
+                                              return GestureDetector(
+                                                onTap: _showProfileDialog,
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 8,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.green
+                                                        .withAlpha(30),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          20,
+                                                        ),
+                                                    border: Border.all(
                                                       color: Colors.green,
-                                                      fontSize: 12,
                                                     ),
                                                   ),
-                                                  SizedBox(width: 8),
-                                                  Icon(
-                                                    Icons.arrow_forward,
-                                                    color: Colors.green,
-                                                    size: 12,
+                                                  child: const Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Icon(
+                                                        Icons.person_add,
+                                                        color: Colors.green,
+                                                        size: 16,
+                                                      ),
+                                                      SizedBox(width: 8),
+                                                      Text(
+                                                        'Set up your profile',
+                                                        style: TextStyle(
+                                                          color: Colors.green,
+                                                          fontSize: 12,
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
+                                                ),
+                                              );
+                                            }
+                                            return const SizedBox.shrink();
+                                          },
+                                        ),
                                       ],
                                     ),
                                   )
@@ -4035,9 +3864,21 @@ for (final conv in allConversations) {
                                             : 0),
                                     itemBuilder: (context, index) {
                                       if (index < _messages.length) {
+                                        int turnNumber = 0;
+                                        for (int i = 0; i <= index; i++) {
+                                          if (_messages[i].isUser) turnNumber++;
+                                        }
                                         return ChatBubbleWithThinking(
+                                          key:
+                                              index < _messageKeys.length
+                                                  ? _messageKeys[index]
+                                                  : null,
                                           message: _messages[index],
                                           enableAutoScroll: _enableAutoScroll,
+                                          turnNumber:
+                                              _messages[index].isUser
+                                                  ? turnNumber
+                                                  : 0,
                                           onContinuePressed:
                                               _messages[index].isIncomplete
                                                   ? _continueIncompleteResponse
@@ -4164,6 +4005,7 @@ for (final conv in allConversations) {
                                               isLoading: _isStreaming,
                                             ),
                                             enableAutoScroll: _enableAutoScroll,
+                                            turnNumber: 0,
                                             onContinuePressed: null,
                                             onRetryPressed: null,
                                             onCancelPressed: _cancelRetry,
@@ -4226,7 +4068,6 @@ for (final conv in allConversations) {
                               },
                             ),
                           ),
-
                         Container(
                           padding: const EdgeInsets.all(7),
                           color: Colors.grey.shade900,
@@ -4256,11 +4097,10 @@ for (final conv in allConversations) {
                                         },
                                       ),
                                     ),
-
                                   Expanded(
                                     child: Container(
-                                      constraints: const BoxConstraints(
-                                        maxHeight: 140,
+                                      constraints: BoxConstraints(
+                                        maxHeight: _inputExpanded ? 140 : 76,
                                       ),
                                       decoration: BoxDecoration(
                                         color: Colors.grey.shade800,
@@ -4273,10 +4113,18 @@ for (final conv in allConversations) {
                                           color: Colors.white,
                                           fontSize: 14,
                                         ),
-                                        maxLines: null,
+                                        maxLines: _inputExpanded ? null : 3,
+                                        minLines: 3,
                                         keyboardType: TextInputType.multiline,
                                         textInputAction:
-                                            TextInputAction.newline,
+                                            _inputExpanded
+                                                ? TextInputAction.newline
+                                                : TextInputAction.send,
+                                        onSubmitted: (_) {
+                                          if (!_isSendingMessage) {
+                                            _sendGeminiMessage();
+                                          }
+                                        },
                                         decoration: InputDecoration(
                                           hintText: 'Type your message...',
                                           hintStyle: const TextStyle(
@@ -4287,7 +4135,7 @@ for (final conv in allConversations) {
                                           contentPadding:
                                               const EdgeInsets.symmetric(
                                                 horizontal: 14,
-                                                vertical: 10,
+                                                vertical: 12,
                                               ),
                                           suffixIcon:
                                               _isStreaming
@@ -4304,17 +4152,27 @@ for (final conv in allConversations) {
                                                   : null,
                                         ),
                                         onChanged: (value) {},
-                                        onSubmitted: (_) {
-                                          if (!_isSendingMessage) {
-                                            _sendGeminiMessage();
-                                          }
-                                        },
                                       ),
                                     ),
                                   ),
-
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: IconButton(
+                                      icon: Icon(
+                                        _inputExpanded
+                                            ? Icons.expand_more
+                                            : Icons.expand_less,
+                                        color: Colors.white70,
+                                        size: 20,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _inputExpanded = !_inputExpanded;
+                                        });
+                                      },
+                                    ),
+                                  ),
                                   const SizedBox(width: 6),
-
                                   ValueListenableBuilder<bool>(
                                     valueListenable: _hasTextOrImages,
                                     builder: (context, hasContent, child) {
@@ -4353,7 +4211,7 @@ for (final conv in allConversations) {
                                                       ),
                                               onPressed: () async {
                                                 if (!isSending && hasContent) {
-                                                  if (!kIsWeb) {
+                                                  if (_isMobile) {
                                                     HapticFeedback.lightImpact();
                                                   }
                                                   await _sendGeminiMessage();
@@ -4384,6 +4242,19 @@ for (final conv in allConversations) {
   }
 
   Widget _buildWebView() {
+    if (kIsWeb) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Text(
+            'WebView is not supported on web. Please use Gemini API mode.',
+            style: TextStyle(color: Colors.white),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -4430,7 +4301,6 @@ for (final conv in allConversations) {
   @override
   Widget build(BuildContext context) {
     super.build(context);
-
     if (_isHiveLoading) {
       return Scaffold(
         backgroundColor: Colors.black,
@@ -4456,7 +4326,6 @@ for (final conv in allConversations) {
         ),
       );
     }
-
     if (_showPlatformSelection) {
       return _buildPlatformSelection();
     } else if (_usingGeminiAPI) {
@@ -4464,6 +4333,16 @@ for (final conv in allConversations) {
     } else {
       return _buildWebView();
     }
+  }
+}
+
+class _ChatHistoryScreen extends StatelessWidget {
+  final Widget Function() buildHistory;
+  const _ChatHistoryScreen({required this.buildHistory});
+
+  @override
+  Widget build(BuildContext context) {
+    return buildHistory();
   }
 }
 
@@ -4515,24 +4394,25 @@ class ChatMessage {
 class _CodeBlock {
   final String language;
   final String code;
-
   _CodeBlock({required this.language, required this.code});
 }
 
 class ChatBubbleWithThinking extends StatefulWidget {
   final ChatMessage message;
   final bool enableAutoScroll;
+  final int turnNumber;
   final VoidCallback? onContinuePressed;
   final VoidCallback? onRetryPressed;
-  final VoidCallback? onCancelPressed; // ADD THIS LINE
+  final VoidCallback? onCancelPressed;
 
   const ChatBubbleWithThinking({
     super.key,
     required this.message,
     this.enableAutoScroll = false,
+    this.turnNumber = 0,
     this.onContinuePressed,
     this.onRetryPressed,
-    this.onCancelPressed, // ADD THIS LINE
+    this.onCancelPressed,
   });
 
   @override
@@ -4540,16 +4420,13 @@ class ChatBubbleWithThinking extends StatefulWidget {
 }
 
 class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
-  bool _isThinkingExpanded = false; // Initially collapsed
+  bool _isThinkingExpanded = false;
+  bool _userExpanded = false;
 
   String _formatThinkingTime(Duration duration) {
-    if (duration.inSeconds < 1) {
-      return '${duration.inMilliseconds}ms';
-    } else if (duration.inSeconds < 60) {
-      return '${duration.inSeconds}s';
-    } else {
-      return '${duration.inMinutes}m ${duration.inSeconds % 60}s';
-    }
+    if (duration.inSeconds < 1) return '${duration.inMilliseconds}ms';
+    if (duration.inSeconds < 60) return '${duration.inSeconds}s';
+    return '${duration.inMinutes}m ${duration.inSeconds % 60}s';
   }
 
   Widget _buildThinkingSection() {
@@ -4557,9 +4434,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         widget.message.thinkingProcess!.isEmpty) {
       return const SizedBox.shrink();
     }
-
     final thinkingText = widget.message.thinkingProcess!;
-
     final preview =
         thinkingText.length > 60
             ? '${thinkingText.substring(0, 60)}...'
@@ -4613,15 +4488,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-              ),
-            if (!_isThinkingExpanded)
-              const Padding(
-                padding: EdgeInsets.only(left: 8),
-                child: Icon(
-                  Icons.arrow_drop_down,
-                  size: 20,
-                  color: Colors.grey,
-                ),
               ),
           ],
         ),
@@ -4705,11 +4571,9 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   List<_CodeBlock> _extractCodeBlocks(String text) {
     final List<_CodeBlock> blocks = [];
     final regex = RegExp(r'```(\w*)\s*\n?([\s\S]*?)```', multiLine: true);
-
     for (final match in regex.allMatches(text)) {
       final language = (match.group(1) ?? '').trim();
       final code = (match.group(2) ?? '').trim();
-
       if (code.isNotEmpty) {
         final isDuplicate = blocks.any(
           (b) => b.code == code && b.language == language,
@@ -4724,10 +4588,11 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         }
       }
     }
-
     return blocks;
   }
 
+  /// Code block now shows a COPY button directly on the left, next
+  /// to the language name. Design mirrors the TABLE block.
   Widget _buildCodeBlock(_CodeBlock block, int index) {
     return Container(
       width: double.infinity,
@@ -4752,7 +4617,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
             child: Row(
               children: [
                 const Icon(Icons.code, size: 14, color: Colors.greenAccent),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Text(
                   block.language.toUpperCase(),
                   style: const TextStyle(
@@ -4761,7 +4626,8 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
+                // Copy button right next to the label.
                 GestureDetector(
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: block.code));
@@ -4776,17 +4642,17 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
-                      vertical: 4,
+                      vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.green.withAlpha(50),
+                      color: Colors.greenAccent.withAlpha(40),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: const Row(
                       children: [
                         Icon(
                           Icons.content_copy,
-                          size: 12,
+                          size: 11,
                           color: Colors.greenAccent,
                         ),
                         SizedBox(width: 4),
@@ -4827,10 +4693,239 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
+  List<List<List<String>>> _extractTables(String text) {
+    final tables = <List<List<String>>>[];
+    final lines = text.split('\n');
+    int i = 0;
+    while (i < lines.length) {
+      final line = lines[i].trim();
+      if (line.startsWith('|') && line.endsWith('|')) {
+        final block = <String>[];
+        while (i < lines.length) {
+          final l = lines[i].trim();
+          if (l.startsWith('|') && l.endsWith('|')) {
+            block.add(l);
+            i++;
+          } else {
+            break;
+          }
+        }
+        if (block.length >= 2) {
+          final rows = <List<String>>[];
+          for (final row in block) {
+            if (RegExp(r'^\|[\s\-\|:]+\|$').hasMatch(row)) continue;
+            final cells =
+                row
+                    .split('|')
+                    .where((c) => c.trim().isNotEmpty || c == ' ')
+                    .map((c) => c.trim())
+                    .toList();
+            final cleaned =
+                cells.where((c) => !RegExp(r'^[\-\s:]+$').hasMatch(c)).toList();
+            if (cleaned.isNotEmpty) rows.add(cleaned);
+          }
+          if (rows.isNotEmpty) tables.add(rows);
+        }
+      } else {
+        i++;
+      }
+    }
+    return tables;
+  }
+
+  /// Table header row now has a COPY button right next to "TABLE".
+  Widget _buildTable(List<List<String>> rows) {
+    // Flatten for copy: tab-separated values per row.
+    final buffer = StringBuffer();
+    for (final row in rows) {
+      buffer.writeln(row.join('\t'));
+    }
+    final tableText = buffer.toString();
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade700),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            color: Colors.grey.shade800,
+            child: Row(
+              children: [
+                const Icon(Icons.table_chart, size: 14, color: Colors.orange),
+                const SizedBox(width: 6),
+                const Text(
+                  'TABLE',
+                  style: TextStyle(
+                    color: Colors.orange,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Copy button next to the TABLE label.
+                GestureDetector(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: tableText));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Table copied!'),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withAlpha(50),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.content_copy,
+                          size: 11,
+                          color: Colors.orange,
+                        ),
+                        SizedBox(width: 4),
+                        Text(
+                          'Copy',
+                          style: TextStyle(
+                            color: Colors.orange,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => _openTableFullscreen(rows),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withAlpha(50),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.open_in_full,
+                          size: 12,
+                          color: Colors.orange,
+                        ),
+                        SizedBox(width: 4),
+                        Text(
+                          'Expand',
+                          style: TextStyle(
+                            color: Colors.orange,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.vertical,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.all(8),
+                child: _buildTableWidget(rows),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTableWidget(List<List<String>> rows) {
+    final columnCount = rows
+        .map((r) => r.length)
+        .fold<int>(0, (a, b) => a > b ? a : b);
+    return Table(
+      defaultColumnWidth: const FixedColumnWidth(140),
+      border: TableBorder.all(color: Colors.grey.shade700, width: 0.5),
+      children:
+          rows.map((row) {
+            final padded = List<String>.from(row);
+            while (padded.length < columnCount) {
+              padded.add('');
+            }
+            return TableRow(
+              children:
+                  padded.map((cell) {
+                    return Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text(
+                        cell,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+            );
+          }).toList(),
+    );
+  }
+
+  void _openTableFullscreen(List<List<String>> rows) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) => Scaffold(
+              backgroundColor: Colors.black,
+              appBar: AppBar(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                title: const Text('Table'),
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+              body: Center(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.all(16),
+                    child: _buildTableWidget(rows),
+                  ),
+                ),
+              ),
+            ),
+      ),
+    );
+  }
+
   Widget _buildParsedText(String text) {
+    final tables = _extractTables(text);
     final codeBlocks = _extractCodeBlocks(text);
 
-    if (codeBlocks.isEmpty) {
+    if (tables.isEmpty && codeBlocks.isEmpty) {
       return SelectionArea(
         child: Text(
           text,
@@ -4839,14 +4934,75 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       );
     }
 
+    if (tables.isNotEmpty) {
+      final widgets = <Widget>[];
+      final lines = text.split('\n');
+      final buffer = <String>[];
+      int i = 0;
+      while (i < lines.length) {
+        final l = lines[i].trim();
+        if (l.startsWith('|') && l.endsWith('|')) {
+          if (buffer.isNotEmpty) {
+            final plain = buffer.join('\n').trim();
+            if (plain.isNotEmpty) {
+              widgets.add(
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: SelectionArea(
+                    child: Text(
+                      plain,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+                ),
+              );
+            }
+            buffer.clear();
+          }
+          final tableLines = <String>[];
+          while (i < lines.length &&
+              lines[i].trim().startsWith('|') &&
+              lines[i].trim().endsWith('|')) {
+            tableLines.add(lines[i].trim());
+            i++;
+          }
+          final parsedTables = _extractTables(tableLines.join('\n'));
+          if (parsedTables.isNotEmpty) {
+            widgets.add(_buildTable(parsedTables.first));
+          }
+        } else {
+          buffer.add(lines[i]);
+          i++;
+        }
+      }
+      if (buffer.isNotEmpty) {
+        final plain = buffer.join('\n').trim();
+        if (plain.isNotEmpty) {
+          widgets.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: SelectionArea(
+                child: Text(
+                  plain,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+          );
+        }
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: widgets,
+      );
+    }
+
     String remainingText = text;
     final List<Widget> widgets = [];
-
     for (int i = 0; i < codeBlocks.length; i++) {
       final block = codeBlocks[i];
       final codePattern = '```${block.language}\n${block.code}\n```';
       final parts = remainingText.split(codePattern);
-
       if (parts.isNotEmpty && parts[0].trim().isNotEmpty) {
         widgets.add(
           Padding(
@@ -4860,16 +5016,13 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
           ),
         );
       }
-
       widgets.add(_buildCodeBlock(block, i));
-
       if (parts.length > 1) {
         remainingText = parts.sublist(1).join(codePattern);
       } else {
         remainingText = '';
       }
     }
-
     if (remainingText.trim().isNotEmpty) {
       widgets.add(
         Padding(
@@ -4883,7 +5036,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ),
       );
     }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: widgets,
@@ -4923,7 +5075,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ],
       );
     } else if (message.isError) {
-      // Make sure error text is always shown
       final displayText =
           message.text.isEmpty
               ? '⚠️ An error occurred. Tap Retry to try again.'
@@ -4961,7 +5112,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     return Container(
       margin: const EdgeInsets.only(top: 4),
       child: ElevatedButton(
-        onPressed: widget.onCancelPressed, // USE THE CALLBACK
+        onPressed: widget.onCancelPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.red.withAlpha(30),
           foregroundColor: Colors.redAccent,
@@ -5047,18 +5198,12 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   }
 
   Widget _buildActionButtons() {
-    // Don't show buttons if:
-    // - Message is from user
-    // - Message is loading
-    // - Message text is empty
-    // - Message is an error
     if (widget.message.isUser ||
         widget.message.isLoading ||
         widget.message.text.isEmpty ||
         widget.message.isError) {
       return const SizedBox.shrink();
     }
-
     return Container(
       margin: const EdgeInsets.only(top: 12),
       child: Row(
@@ -5085,9 +5230,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
               ),
             ),
           ),
-
           const SizedBox(width: 8),
-
           if (widget.onRetryPressed != null)
             InkWell(
               onTap: widget.onRetryPressed,
@@ -5122,100 +5265,170 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final message = widget.message;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Align(
-        alignment:
-            message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          width: double.infinity,
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.99,
+  Widget _buildUserCollapsibleText(String text) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _userExpanded = !_userExpanded),
+          child: Text(
+            text,
+            maxLines: _userExpanded ? null : 1,
+            overflow:
+                _userExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        ),
+        const SizedBox(height: 4),
+        GestureDetector(
+          onTap: () => setState(() => _userExpanded = !_userExpanded),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              if (!message.isUser &&
-                  message.thinkingProcess != null &&
-                  message.thinkingProcess!.isNotEmpty)
-                _buildThinkingSection(),
-
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: message.isUser ? Colors.blue.shade900 : Colors.black87,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color:
-                        message.isUser
-                            ? Colors.blueAccent
-                            : (message.isError
-                                ? Colors.redAccent
-                                : Colors.grey.shade700),
-                    width: 1,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (message.images != null && message.images!.isNotEmpty)
-                      Container(
-                        margin: EdgeInsets.only(
-                          bottom: message.text.isNotEmpty ? 8 : 0,
-                        ),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children:
-                              message.images!.asMap().entries.map((entry) {
-                                return _buildImagePreview(
-                                  entry.value,
-                                  entry.key,
-                                );
-                              }).toList(),
-                        ),
-                      ),
-
-                    _buildMessageContent(message),
-
-                    if (message.isUser &&
-                        message.text.isEmpty &&
-                        message.images != null &&
-                        message.images!.isNotEmpty &&
-                        !message.isLoading)
-                      const Text(
-                        '[Image attached]',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-
-                    if (message.isError &&
-                        widget.onRetryPressed != null &&
-                        message.canRetry)
-                      _buildRetryButton(),
-
-                    if (message.isIncomplete &&
-                        !message.isUser &&
-                        !message.isError &&
-                        widget.onContinuePressed != null)
-                      _buildContinueButton(),
-
-                    if (!message.isError) _buildActionButtons(),
-                  ],
-                ),
+              Icon(
+                _userExpanded ? Icons.expand_less : Icons.expand_more,
+                size: 14,
+                color: Colors.white70,
+              ),
+              Text(
+                _userExpanded ? 'Show less' : 'Show more',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final message = widget.message;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.turnNumber > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, right: 6),
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: const BoxDecoration(
+                  color: Colors.lightBlue,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${widget.turnNumber}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          Expanded(
+            child: Align(
+              alignment:
+                  message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+              child: Container(
+                width: double.infinity,
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.99,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (!message.isUser &&
+                        message.thinkingProcess != null &&
+                        message.thinkingProcess!.isNotEmpty)
+                      _buildThinkingSection(),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color:
+                            message.isUser
+                                ? Colors.blue.shade900
+                                : Colors.black87,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color:
+                              message.isUser
+                                  ? Colors.blueAccent
+                                  : (message.isError
+                                      ? Colors.redAccent
+                                      : Colors.grey.shade700),
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment:
+                            message.isUser
+                                ? CrossAxisAlignment.end
+                                : CrossAxisAlignment.start,
+                        children: [
+                          if (message.images != null &&
+                              message.images!.isNotEmpty)
+                            Container(
+                              margin: EdgeInsets.only(
+                                bottom: message.text.isNotEmpty ? 8 : 0,
+                              ),
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children:
+                                    message.images!.asMap().entries.map((
+                                      entry,
+                                    ) {
+                                      return _buildImagePreview(
+                                        entry.value,
+                                        entry.key,
+                                      );
+                                    }).toList(),
+                              ),
+                            ),
+                          if (message.isUser && message.text.isNotEmpty)
+                            _buildUserCollapsibleText(message.text)
+                          else
+                            _buildMessageContent(message),
+                          if (message.isUser &&
+                              message.text.isEmpty &&
+                              message.images != null &&
+                              message.images!.isNotEmpty &&
+                              !message.isLoading)
+                            const Text(
+                              '[Image attached]',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          if (message.isError &&
+                              widget.onRetryPressed != null &&
+                              message.canRetry)
+                            _buildRetryButton(),
+                          if (message.isIncomplete &&
+                              !message.isUser &&
+                              !message.isError &&
+                              widget.onContinuePressed != null)
+                            _buildContinueButton(),
+                          if (!message.isError && !message.isUser)
+                            _buildActionButtons(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5240,6 +5453,5 @@ class AIPlatform {
 class _ParsedResponse {
   final String thinkingProcess;
   final String finalResponse;
-
   _ParsedResponse({required this.thinkingProcess, required this.finalResponse});
 }
