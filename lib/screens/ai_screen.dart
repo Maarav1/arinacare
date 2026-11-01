@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
@@ -179,7 +180,8 @@ class _AIScreenState extends State<AIScreen>
   double _temperature = 0.2;
 
   int _maxContextMessages = 100;
-  bool _enableSmartContext = true;
+  // Smart Context is always ON
+  final bool _enableSmartContext = true;
 
   bool _alwaysSearchForAccuracy = true;
 
@@ -249,9 +251,14 @@ class _AIScreenState extends State<AIScreen>
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
+
+    // Crucial for DeepSeek-style scroll lock.
+    // If the user swipes up while streaming, we MUST detect it immediately
+    // so the auto-scroll timer doesn't fight them.
     final isNearBottom =
         _scrollController.offset >=
         _scrollController.position.maxScrollExtent - 150;
+
     if (!isNearBottom) {
       if (!_showScrollButton) {
         setState(() {
@@ -270,11 +277,10 @@ class _AIScreenState extends State<AIScreen>
     }
 
     // Update the header topic based on which turn is currently visible
-    // near the top of the list.
     _recalculateVisibleTurn();
   }
 
-    /// Looks at the current scroll offset and figures out which user
+  /// Looks at the current scroll offset and figures out which user
   /// message (turn) is closest to the top. Updates _currentVisibleTurn
   /// so the header can show that turn's topic.
   void _recalculateVisibleTurn() {
@@ -286,8 +292,6 @@ class _AIScreenState extends State<AIScreen>
       return;
     }
 
-    // Only consider the first few user messages per frame — we just
-    // need to know which one is closest to the top of the viewport.
     int visibleTurn = 1;
     int userCount = 0;
     for (int i = 0; i < _messages.length; i++) {
@@ -299,9 +303,7 @@ class _AIScreenState extends State<AIScreen>
       final box = ctx.findRenderObject() as RenderBox?;
       if (box == null) continue;
       final pos = box.localToGlobal(Offset.zero);
-      // The chat area begins roughly below the header (~34px) and the
-      // AppBar (~56px). We use 60 as the threshold for "this turn is
-      // now above the visible reading area".
+
       const topThreshold = 60.0;
       if (pos.dy < topThreshold) {
         visibleTurn = userCount;
@@ -2001,6 +2003,9 @@ At the very start of your reply, output a topic tag on its own line in this exac
   }
 
   void _scheduleAutoScroll() {
+    // CRITICAL FIX: Check _userScrolledUp.
+    // If the user swipes up, we DO NOT auto-scroll.
+    // This is what creates the DeepSeek-style scroll lock.
     if (!_enableAutoScroll || _userScrolledUp) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _scrollController.hasClients) {
@@ -2395,6 +2400,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
                               }
                             },
                           ),
+                         
                         ],
                       ),
                       const SizedBox(height: 16),
@@ -2514,24 +2520,6 @@ At the very start of your reply, output a topic tag on its own line in this exac
                       _buildSettingsSection(
                         title: 'Context Settings',
                         children: [
-                          SwitchListTile(
-                            title: const Text(
-                              'Smart Context',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            subtitle: const Text(
-                              'Focus on recent messages',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            value: _enableSmartContext,
-                            activeColor: Colors.green,
-                            onChanged: (value) {
-                              sheetSetState(() => _enableSmartContext = value);
-                              if (mounted) {
-                                setState(() => _enableSmartContext = value);
-                              }
-                            },
-                          ),
                           ListTile(
                             title: const Text(
                               'Context Window Size',
@@ -3385,7 +3373,6 @@ At the very start of your reply, output a topic tag on its own line in this exac
         color: Colors.lightGreen,
         onTap: _showProfileDialog,
       ),
-      
     ];
 
     // Apply rotation: chips shifted left by _headerRotation.
@@ -3668,20 +3655,6 @@ At the very start of your reply, output a topic tag on its own line in this exac
                     },
                   ),
                 ),
-                PopupMenuItem<String>(
-                  value: 'clear',
-                  child: ListTile(
-                    leading: const Icon(Icons.delete, color: Colors.white),
-                    title: const Text(
-                      'Clear this chat',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _confirmClearCurrentChat();
-                    },
-                  ),
-                ),
               ];
             },
             onSelected: (value) {
@@ -3868,6 +3841,14 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                         for (int i = 0; i <= index; i++) {
                                           if (_messages[i].isUser) turnNumber++;
                                         }
+                                                                                // Try to find the user message that prompted this AI response
+                                        String? promptForThisMsg;
+                                        if (!_messages[index].isUser &&
+                                            index > 0) {
+                                          promptForThisMsg =
+                                              _messages[index - 1].text;
+                                        }
+
                                         return ChatBubbleWithThinking(
                                           key:
                                               index < _messageKeys.length
@@ -3879,6 +3860,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                               _messages[index].isUser
                                                   ? turnNumber
                                                   : 0,
+                                          originalPrompt:
+                                              promptForThisMsg, // <-- ADD THIS
                                           onContinuePressed:
                                               _messages[index].isIncomplete
                                                   ? _continueIncompleteResponse
@@ -4100,7 +4083,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                   Expanded(
                                     child: Container(
                                       constraints: BoxConstraints(
-                                        maxHeight: _inputExpanded ? 140 : 76,
+                                        maxHeight: _inputExpanded ? 140 : 44,
                                       ),
                                       decoration: BoxDecoration(
                                         color: Colors.grey.shade800,
@@ -4113,8 +4096,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                           color: Colors.white,
                                           fontSize: 14,
                                         ),
-                                        maxLines: _inputExpanded ? null : 3,
-                                        minLines: 3,
+                                        maxLines: _inputExpanded ? null : 1,
+                                        minLines: 1,
                                         keyboardType: TextInputType.multiline,
                                         textInputAction:
                                             _inputExpanded
@@ -4401,6 +4384,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
   final ChatMessage message;
   final bool enableAutoScroll;
   final int turnNumber;
+  final String? originalPrompt; // <-- ADD THIS
   final VoidCallback? onContinuePressed;
   final VoidCallback? onRetryPressed;
   final VoidCallback? onCancelPressed;
@@ -4410,6 +4394,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
     required this.message,
     this.enableAutoScroll = false,
     this.turnNumber = 0,
+    this.originalPrompt, // <-- ADD THIS
     this.onContinuePressed,
     this.onRetryPressed,
     this.onCancelPressed,
@@ -5151,12 +5136,12 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       child: ElevatedButton(
         onPressed: widget.onContinuePressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.orange.withAlpha(30),
-          foregroundColor: Colors.orange,
+          backgroundColor: Colors.lightBlue.withAlpha(30),
+          foregroundColor: Colors.blue,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
-            side: BorderSide(color: Colors.orange.withAlpha(100), width: 1),
+            side: BorderSide(color: Colors.greenAccent.withAlpha(100), width: 1),
           ),
         ),
         child: const Row(
@@ -5206,7 +5191,9 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     }
     return Container(
       margin: const EdgeInsets.only(top: 12),
-      child: Row(
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
           InkWell(
             onTap: _copyFullMessage,
@@ -5230,7 +5217,32 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          // NEW: Report Button for Play Store compliance
+          InkWell(
+            onTap: _reportMessage,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withAlpha(30),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.redAccent.withAlpha(100),
+                  width: 1,
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.flag, size: 14, color: Colors.redAccent),
+                  SizedBox(width: 6),
+                  Text(
+                    'Report',
+                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
           if (widget.onRetryPressed != null)
             InkWell(
               onTap: widget.onRetryPressed,
@@ -5263,6 +5275,58 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ],
       ),
     );
+  }
+
+    /// Opens a pre-filled email with the user's prompt and the AI response.
+  void _reportMessage() async {
+    // We will build the body.
+    // For now, we pass the AI response.
+        final String body = '''
+Hello Denis,
+
+I would like to report an AI response.
+
+--- PROMPT ---
+${widget.originalPrompt ?? "Prompt not captured"}
+
+--- AI RESPONSE ---
+${widget.message.text}
+
+--- METADATA ---
+Model: Gemini 2.5 Series
+Time: ${widget.message.timestamp.toIso8601String()}
+''';
+
+    final Uri emailLaunchUri = Uri(
+      scheme: 'mailto',
+      path: 'denismarav@gmail.com',
+      query: _encodeQueryParameters(<String, String>{
+        'subject': 'AI Response Report',
+        'body': body,
+      }),
+    );
+
+    if (await canLaunchUrl(emailLaunchUri)) {
+      await launchUrl(emailLaunchUri);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open email app.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  String? _encodeQueryParameters(Map<String, String> params) {
+    return params.entries
+        .map(
+          (MapEntry<String, String> e) =>
+              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+        )
+        .join('&');
   }
 
   Widget _buildUserCollapsibleText(String text) {
