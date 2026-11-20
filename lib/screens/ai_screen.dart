@@ -51,6 +51,7 @@ class _AIScreenState extends State<AIScreen>
   bool _isSendingMessage = false;
 
   bool _enableThinking = false;
+  bool _enableReporting = false; // Toggle for report button
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _interestsController = TextEditingController();
   final ValueNotifier<bool> _hasTextOrImages = ValueNotifier<bool>(false);
@@ -107,14 +108,14 @@ class _AIScreenState extends State<AIScreen>
     ),
     GeminiModel(
       id: 'gemini-3.5-flash-lite',
-      name: 'Gemini 3.5 flash-lite',
+      name: 'Gemini 3.5 Flash-Lite',
       description: 'Stable workhorse',
       priority: 'Balanced',
       bestFor: 'General use',
       isRecommended: false,
     ),
     GeminiModel(
-      id: 'gemini-flash-latest',
+      id: 'gemini-3.8-flash',
       name: 'Gemini 3.8 Flash',
       description: 'Ultra-cheap tier',
       priority: 'Budget',
@@ -189,9 +190,10 @@ class _AIScreenState extends State<AIScreen>
   String _currentThinkingProcess = '';
   bool _isThinkingComplete = false;
   bool _isThinkingPhase = false;
+  String _currentActivityLabel = '🧠 Thinking...';
+  bool _hasWebSearchGrounding = false;
 
   DateTime? _thinkingPhaseStartedAt;
-  static const Duration _thinkingPhaseTimeout = Duration(seconds: 60);
 
   final bool _enableWebSearch = false;
 
@@ -400,13 +402,18 @@ class _AIScreenState extends State<AIScreen>
       _userProfileBox = await Hive.openBox<UserProfileHive>('user_profile');
 
       await _loadUserProfile();
-      await _loadChatHistoryForModel(_selectedModel);
 
+      // Mark Hive as ready before loading history. The history loader checks
+      // _isHiveLoading and must not be blocked during initial startup.
       if (mounted) {
         setState(() {
           _isHiveLoading = false;
         });
+      } else {
+        _isHiveLoading = false;
       }
+
+      await _loadChatHistoryForModel(_selectedModel);
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error initializing Hive: $e');
@@ -691,27 +698,10 @@ class _AIScreenState extends State<AIScreen>
                   b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
             );
 
-      final uniqueConversations = <String, ConversationHive>{};
-      for (final conv in allConversations) {
-        final preview = _getConversationPreview(conv.id);
-        if (!uniqueConversations.containsKey(preview)) {
-          uniqueConversations[preview] = conv;
-        } else {
-          final messagesToDelete =
-              _chatBox.values
-                  .where((msg) => msg.conversationId == conv.id)
-                  .toList();
-          for (final msg in messagesToDelete) {
-            await msg.delete();
-          }
-          await conv.delete();
-        }
-      }
-
-      final conversations =
-          uniqueConversations.values.toList()..sort(
-            (a, b) => b.lastMessageTimestamp.compareTo(a.lastMessageTimestamp),
-          );
+      // A preview is not a unique identifier. Separate conversations can
+      // legitimately begin with the same prompt, so never delete history
+      // based on matching preview text.
+      final conversations = allConversations;
 
       if (conversations.isNotEmpty) {
         final latestConversation = conversations.first;
@@ -890,11 +880,13 @@ Current Year: $currentYear''';
 
     systemPrompt += '''
 
-DEEP REASONING (MANDATORY):
-- Before you write anything, THINK deeply about the question.
-- Review your draft internally for factual errors, typos, and logical mistakes. Fix them silently.
-- Do NOT rush. Slow and correct beats fast and wrong.
-- If unsure, say so. Never invent names, versions, dates, or citations.
+PRE-RESPONSE QUALITY REVIEW (MANDATORY):
+- Before emitting the first response token, privately prepare and check the answer.
+- Verify that it answers the user's latest request and follows all stated constraints.
+- Check factual claims, calculations, code syntax, spelling, grammar, and logical consistency.
+- Correct mistakes in the draft before producing the final response.
+- Output only the corrected final answer. Never output drafts, private analysis, hidden chain-of-thought, or notes to yourself.
+- If uncertain, state the uncertainty clearly. Never invent names, versions, dates, or citations.
 
 TABLE FORMATTING:
 - Use proper Markdown tables (| header | header | with separator |---|---|).
@@ -929,9 +921,9 @@ GROUNDING & ACCURACY (MANDATORY):
 At the very start of your reply, output a topic tag on its own line in this exact format: [TOPIC: up to 3 words]. Then continue with your normal reply on the next line.''';
     }
 
-    if (_enableThinking) {
+        if (_enableThinking) {
       systemPrompt +=
-          '\n\nThinking format: "THINKING_START[your reasoning]THINKING_END" then provide final response.';
+          '\n\nOUTPUT FORMAT (STRICT): Begin your reply with the literal token THINKING_START. Then write a DETAILED user-facing explanation of your approach: how you understand the request, your plan, the steps you will take, and the checks you will run. This may be several paragraphs and should be as long as the task needs. Then write the literal token THINKING_END. Immediately after THINKING_END, write the COMPLETE final answer (explanations, calculations, equations, examples, tables, conclusions). Never put the final answer inside the thinking block. The thinking block is a user-facing approach summary, not private chain-of-thought — do not include raw internal deliberation, only a clear explanation of what you are doing and why.';
     }
 
     contents.add({
@@ -952,7 +944,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
     });
 
     if (_messages.isNotEmpty) {
-      final chatMessages =
+            final chatMessages =
           _messages
               .where(
                 (msg) =>
@@ -960,6 +952,18 @@ At the very start of your reply, output a topic tag on its own line in this exac
                     !msg.text.contains('Understood'),
               )
               .toList();
+
+      // Remove the current prompt from history because it is added
+      // separately below as the new user message.
+      // Remove only the LAST matching user message to preserve
+      // earlier messages that happen to contain the same text.
+      for (int i = chatMessages.length - 1; i >= 0; i--) {
+        if (chatMessages[i].isUser &&
+            chatMessages[i].text.trim() == currentPrompt.trim()) {
+          chatMessages.removeAt(i);
+          break;
+        }
+      }
 
       List<ChatMessage> contextMessages;
       if (chatMessages.length <= _maxContextMessages) {
@@ -1040,6 +1044,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
   Stream<String> _streamGeminiResponse(
     String prompt, {
     List<Uint8List>? images,
+    void Function(String label)? onActivity,
   }) async* {
     final bool streamMode = _enableStreaming;
     final String url =
@@ -1054,7 +1059,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
         'temperature': _temperature,
         'topK': 40,
         'topP': 0.95,
-        'maxOutputTokens': 131072,
+        'maxOutputTokens': 65536,
       },
       'safetySettings': [
         {
@@ -1087,6 +1092,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
     final request = http.Request('POST', Uri.parse(url));
     request.headers.addAll(headers);
     request.body = jsonEncode(requestBody);
+    final requestStopwatch = Stopwatch()..start();
 
     final streamedResponse = await request.send().timeout(
       const Duration(seconds: 90),
@@ -1106,8 +1112,14 @@ At the very start of your reply, output a topic tag on its own line in this exac
     String fullBufferedText = '';
 
     await for (final chunk in streamedResponse.stream
+        .timeout(const Duration(seconds: 90))
         .transform(utf8.decoder)
         .transform(const LineSplitter())) {
+      if (requestStopwatch.elapsed > const Duration(minutes: 5)) {
+        throw TimeoutException(
+          'The response exceeded the 5-minute time limit.',
+        );
+      }
       if (chunk.trim().isEmpty) continue;
 
       if (chunk.startsWith('data: ')) {
@@ -1119,42 +1131,36 @@ At the very start of your reply, output a topic tag on its own line in this exac
           if (jsonData['candidates'] != null &&
               jsonData['candidates'].isNotEmpty) {
             final candidate = jsonData['candidates'][0];
+            if (candidate['groundingMetadata'] != null) {
+              onActivity?.call('🌐 Reviewing web search results...');
+            }
             if (candidate['content'] != null &&
                 candidate['content']['parts'] != null) {
               final parts = candidate['content']['parts'];
-              if (parts.isNotEmpty && parts[0]['text'] != null) {
-                final text = parts[0]['text'] as String;
-                if (text.isNotEmpty) {
-                  buffer += text;
+              final text =
+                  parts
+                      .where((part) => part is Map && part['text'] is String)
+                      .map((part) => part['text'] as String)
+                      .join();
+              if (text.isNotEmpty) {
+                buffer += text;
 
-                  if (_enableThinking &&
-                      buffer.contains('THINKING_START') &&
-                      !buffer.contains('THINKING_END')) {
-                    final startedAt = _thinkingPhaseStartedAt ?? DateTime.now();
-                    _thinkingPhaseStartedAt = startedAt;
-                    final elapsed = DateTime.now().difference(startedAt);
-                    if (elapsed < _thinkingPhaseTimeout) {
-                      continue;
-                    }
+                if (streamMode) {
+                  // Drip the buffer out in small chunks so the user
+                  // sees a "typing" effect rather than a pop.
+                  final drip = buffer;
+                  buffer = '';
+                  // Break into small pieces and yield them with a
+                  // small delay between each.
+                  const chunkSize = 56;
+                  for (int i = 0; i < drip.length; i += chunkSize) {
+                    final end = (i + chunkSize).clamp(0, drip.length);
+                    yield drip.substring(i, end);
+                    await Future.delayed(const Duration(milliseconds: 1));
                   }
-
-                  if (streamMode) {
-                    // Drip the buffer out in small chunks so the user
-                    // sees a "typing" effect rather than a pop.
-                    final drip = buffer;
-                    buffer = '';
-                    // Break into small pieces and yield them with a
-                    // small delay between each.
-                    const chunkSize = 56;
-                    for (int i = 0; i < drip.length; i += chunkSize) {
-                      final end = (i + chunkSize).clamp(0, drip.length);
-                      yield drip.substring(i, end);
-                      await Future.delayed(const Duration(milliseconds: 1));
-                    }
-                  } else {
-                    fullBufferedText += buffer;
-                    buffer = '';
-                  }
+                } else {
+                  fullBufferedText += buffer;
+                  buffer = '';
                 }
               }
             }
@@ -1166,6 +1172,39 @@ At the very start of your reply, output a topic tag on its own line in this exac
     }
 
     if (!streamMode) yield fullBufferedText;
+  }
+
+  /// SINGLE source of truth for showing an error.
+  /// If an error bubble already exists, UPDATE it in place.
+  /// Otherwise append ONE.
+  void _showErrorBubble(String errorText, {bool canRetry = true}) {
+    if (!mounted) return;
+    setState(() {
+      if (_activeErrorIndex != null &&
+          _activeErrorIndex! < _messages.length &&
+          _messages[_activeErrorIndex!].isError) {
+        // Update in place — no new bubble.
+        _messages[_activeErrorIndex!] = ChatMessage(
+          text: errorText,
+          isUser: false,
+          timestamp: DateTime.now(),
+          isError: true,
+          canRetry: canRetry,
+        );
+      } else {
+        _messages.add(
+          ChatMessage(
+            text: errorText,
+            isUser: false,
+            timestamp: DateTime.now(),
+            isError: true,
+            canRetry: canRetry,
+          ),
+        );
+        _messageKeys.add(GlobalKey());
+        _activeErrorIndex = _messages.length - 1;
+      }
+    });
   }
 
   /// Retry replaces the previous error bubble in place. No stacking.
@@ -1199,21 +1238,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
     }
     _retryCount++;
 
-    // Remove the existing error bubble if we have one.
-    if (mounted) {
-      setState(() {
-        if (_activeErrorIndex != null &&
-            _activeErrorIndex! < _messages.length &&
-            _messages[_activeErrorIndex!].isError) {
-          _messages.removeAt(_activeErrorIndex!);
-          if (_activeErrorIndex! < _messageKeys.length) {
-            _messageKeys.removeAt(_activeErrorIndex!);
-          }
-          _activeErrorIndex = null;
-        }
-      });
-    }
-
+    // DON'T remove the error bubble. Let _showErrorBubble update it in place.
     await _sendGeminiMessageInternal(
       _lastFailedPrompt!,
       images: _lastFailedImages,
@@ -1230,27 +1255,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
         _isSendingNotifier.value = false;
         _isStreaming = false;
         _currentStreamText = '';
-        if (_activeErrorIndex != null &&
-            _activeErrorIndex! < _messages.length) {
-          _messages[_activeErrorIndex!] = ChatMessage(
-            text: '⚠️ Cancelled. Please try again.',
-            isUser: false,
-            timestamp: DateTime.now(),
-            isError: true,
-          );
-        } else {
-          _messages.add(
-            ChatMessage(
-              text: '⚠️ Cancelled. Please try again.',
-              isUser: false,
-              timestamp: DateTime.now(),
-              isError: true,
-            ),
-          );
-          _messageKeys.add(GlobalKey());
-          _activeErrorIndex = _messages.length - 1;
-        }
       });
+      _showErrorBubble('⚠️ Cancelled. Please try again.', canRetry: true);
     }
   }
 
@@ -1288,6 +1294,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
       _currentThinkingProcess = '';
       _isThinkingComplete = false;
       _isThinkingPhase = false;
+      _currentActivityLabel = '🧠 Thinking...';
+      _hasWebSearchGrounding = false;
       _currentStreamText = '';
     });
 
@@ -1296,8 +1304,15 @@ At the very start of your reply, output a topic tag on its own line in this exac
     try {
       String accumulatedResponse = '';
       _streamSubscription = _streamGeminiResponse(
-        "Continue your previous response from exactly where you stopped.",
+        "Continue the response below from exactly where it stopped. Do not repeat, paraphrase, or restart the existing text. Begin with the next new sentence and finish the response naturally.\n\nExisting incomplete response:\n$incompleteSnapshot",
         images: carryImages,
+        onActivity: (label) {
+          if (!mounted) return;
+          setState(() {
+            _hasWebSearchGrounding = true;
+            _currentActivityLabel = label;
+          });
+        },
       ).listen(
         (chunk) {
           if (!mounted) return;
@@ -1309,20 +1324,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
         },
         onError: (error) {
           if (!mounted) return;
-          setState(() {
-            _messages.add(
-              ChatMessage(
-                text: 'Network error. Tap Retry.',
-                isUser: false,
-                timestamp: DateTime.now(),
-                isError: true,
-                canRetry: true,
-              ),
-            );
-            _messageKeys.add(GlobalKey());
-            _activeErrorIndex = _messages.length - 1;
-            _resetContinueState();
-          });
+          _showErrorBubble('Network error. Tap Retry.');
+          _resetContinueState();
         },
         onDone: () async {
           if (!mounted) return;
@@ -1354,20 +1357,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            text: 'Network error. Tap Retry.',
-            isUser: false,
-            timestamp: DateTime.now(),
-            isError: true,
-            canRetry: true,
-          ),
-        );
-        _messageKeys.add(GlobalKey());
-        _activeErrorIndex = _messages.length - 1;
-        _resetContinueState();
-      });
+      _showErrorBubble('Network error. Tap Retry.');
+      _resetContinueState();
     }
   }
 
@@ -1391,74 +1382,175 @@ At the very start of your reply, output a topic tag on its own line in this exac
     _currentThinkingProcess = '';
     _isThinkingComplete = false;
     _isThinkingPhase = false;
+    _currentActivityLabel = '🧠 Thinking...';
+    _hasWebSearchGrounding = false;
   }
 
-  _ParsedResponse _parseThinkingResponse(String fullResponse) {
-    if (_enableThinking) {
-      const thinkingStartMarker = 'THINKING_START';
-      const thinkingEndMarker = 'THINKING_END';
-      if (fullResponse.contains(thinkingStartMarker) &&
-          fullResponse.contains(thinkingEndMarker)) {
-        final thinkingBuffer = StringBuffer();
-        int cursor = 0;
-        while (true) {
-          final start = fullResponse.indexOf(thinkingStartMarker, cursor);
-          if (start == -1) break;
-          final end = fullResponse.indexOf(
-            thinkingEndMarker,
-            start + thinkingStartMarker.length,
-          );
-          if (end == -1) break;
-          final chunk =
-              fullResponse
-                  .substring(start + thinkingStartMarker.length, end)
-                  .trim();
-          if (chunk.isNotEmpty) {
-            if (thinkingBuffer.isNotEmpty) thinkingBuffer.write('\n\n');
-            thinkingBuffer.write(chunk);
-          }
-          cursor = end + thinkingEndMarker.length;
-        }
-        final cleaned =
-            fullResponse
-                .replaceAll(thinkingStartMarker, '')
-                .replaceAll(thinkingEndMarker, '')
-                .trim();
-        if (thinkingBuffer.isNotEmpty) {
-          return _ParsedResponse(
-            thinkingProcess: thinkingBuffer.toString(),
-            finalResponse: cleaned,
-          );
-        }
-      }
+  _ParsedResponse _parseThinkingResponse(
+    String fullResponse, {
+    bool isFinal = false,
+  }) {
+    if (!_enableThinking) {
+      return _ParsedResponse(thinkingProcess: '', finalResponse: fullResponse);
     }
+
+    // Preferred path: explicit markers. The thinking panel is allowed to be
+    // long here — there is no length cap. Only a missing THINKING_END at the
+    // very end is treated specially, because that genuinely means the model
+    // never closed the block.
+    if (fullResponse.contains('THINKING_START')) {
+      return _parseMarkedThinking(fullResponse, isFinal: isFinal);
+    }
+
+    // Fallback: the model streamed reasoning without any markers. Detect the
+    // planning scaffolding and split it so the dropdown fills live and the
+    // answer bubble stays clean. During streaming we use a conservative
+    // boundary so we do not flicker; at the end we use the full heuristic.
+    final unmarked = _splitUnmarkedReasoning(fullResponse, isFinal: isFinal);
+    if (unmarked != null) return unmarked;
+
     return _ParsedResponse(thinkingProcess: '', finalResponse: fullResponse);
   }
 
+  _ParsedResponse _parseMarkedThinking(
+    String fullResponse, {
+    required bool isFinal,
+  }) {
+    const thinkingStartMarker = 'THINKING_START';
+    const thinkingEndMarker = 'THINKING_END';
+
+    final thinkingParts = <String>[];
+    final visibleResponse = StringBuffer();
+    var cursor = 0;
+
+    while (cursor < fullResponse.length) {
+      final start = fullResponse.indexOf(thinkingStartMarker, cursor);
+      if (start == -1) {
+        visibleResponse.write(fullResponse.substring(cursor));
+        break;
+      }
+
+      // Preserve text before the marker, such as the optional topic tag.
+      visibleResponse.write(fullResponse.substring(cursor, start));
+      final contentStart = start + thinkingStartMarker.length;
+      final end = fullResponse.indexOf(thinkingEndMarker, contentStart);
+
+      if (end == -1) {
+        // Unterminated block. At the end of the stream this means the model
+        // never emitted THINKING_END. Keep it in the thinking panel (it is
+        // real reasoning), and let the answer stay empty; onDone promotes the
+        // summary into the answer only if nothing else was produced.
+        final unclosedContent = fullResponse.substring(contentStart).trim();
+        if (unclosedContent.isNotEmpty) thinkingParts.add(unclosedContent);
+        cursor = fullResponse.length;
+        break;
+      }
+
+      final summary = fullResponse.substring(contentStart, end).trim();
+      if (summary.isNotEmpty) thinkingParts.add(summary);
+      cursor = end + thinkingEndMarker.length;
+    }
+
+    var finalText = visibleResponse.toString().trim();
+    final thinkingText = thinkingParts.join('\n\n').trim();
+    final finalTextWithoutTopic =
+        finalText
+            .replaceFirst(RegExp(r'^\s*\[TOPIC:[^\]]*\]\s*\n?'), '')
+            .trim();
+
+    // If the model emitted a summary but no answer after THINKING_END,
+    // promote that content to the main bubble rather than saving an empty reply.
+    if (isFinal && finalTextWithoutTopic.isEmpty && thinkingText.isNotEmpty) {
+      finalText = [
+        finalText,
+        thinkingText,
+      ].where((part) => part.trim().isNotEmpty).join('\n\n');
+      return _ParsedResponse(thinkingProcess: '', finalResponse: finalText);
+    }
+
+    return _ParsedResponse(
+      thinkingProcess: thinkingText,
+      finalResponse: finalText,
+    );
+  }
+
+  /// Heuristic split for replies that contain planning prose but no
+  /// THINKING_START/THINKING_END markers. Returns null if the text does not
+  /// look like it has a reasoning preamble.
+  _ParsedResponse? _splitUnmarkedReasoning(
+    String text, {
+    required bool isFinal,
+  }) {
+    if (text.trim().isEmpty) return null;
+
+    // Evidence that the leading text is planning/reasoning scaffolding.
+    final head = text.length > 400 ? text.substring(0, 400) : text;
+    final hasPlanMarkers =
+        head.contains('**Plan:**') ||
+        head.contains('**Pre-computation') ||
+        head.contains('**Search Queries:**') ||
+        head.startsWith('The user is asking') ||
+        head.startsWith('The user wants') ||
+        head.startsWith('Let me ') ||
+        head.startsWith('I need to ');
+
+    if (!hasPlanMarkers) return null;
+
+    // Where does the real answer begin? Prefer the topic tag line, then the
+    // first Markdown heading after the plan block, then a blank-line break
+    // followed by a heading/paragraph.
+    int? cut;
+
+    final topicMatch = RegExp(
+      r'(^|\n)\s*\[TOPIC:',
+      multiLine: true,
+    ).firstMatch(text);
+    if (topicMatch != null) {
+      cut = topicMatch.start;
+      if (text[cut] == '\n') cut += 1;
+    }
+
+    if (cut == null) {
+      // First Markdown heading (##, ###) — typical answer opener.
+      final headingMatch = RegExp(r'\n#{1,4}\s').firstMatch(text);
+      if (headingMatch != null) cut = headingMatch.start;
+    }
+
+    if (cut == null && isFinal) {
+      // Last resort at end of stream: split at the last blank line before a
+      // sizeable tail, so the answer is not lost.
+      final idx = text.lastIndexOf('\n\n');
+      if (idx > 0 && text.length - idx > 200) cut = idx;
+    }
+
+    if (cut == null || cut <= 0) return null;
+
+    final thinking = text.substring(0, cut).trim();
+    final answer = text.substring(cut).trim();
+    if (thinking.isEmpty) return null;
+
+    // During streaming, if we have no answer yet, keep everything in thinking
+    // so the dropdown fills and the main bubble stays empty.
+    if (answer.isEmpty) {
+      return _ParsedResponse(thinkingProcess: thinking, finalResponse: '');
+    }
+
+    return _ParsedResponse(thinkingProcess: thinking, finalResponse: answer);
+  }
+
+    /// Honest status label. We only know:
+  ///  - whether web search grounding fired (real signal),
+  ///  - whether reasoning text is arriving (real signal),
+  ///  - whether the final answer has started (real signal).
+  /// We do NOT claim specific internal stages.
   String _thinkingPhaseLabel(String thinkingTextSoFar) {
-    final length = thinkingTextSoFar.trim().length;
-    if (length == 0) return '🧠 Thinking...';
-    if (length < 40) return '🔍 Sleuthing through the data...';
-    if (length < 80) return '🧠 Cogitating on your question...';
-    if (length < 120) return '🔎 Figuring out the best response...';
-    if (length < 160) return '📊 Analyzing the context...';
-    if (length < 200) return '🤔 Contemplating the nuances...';
-    if (length < 240) return '🧩 Piecing together the answer...';
-    if (length < 280) return '📝 Formulating a response...';
-    if (length < 320) return '🔬 Examining the details...';
-    if (length < 360) return '🧠 Processing your request...';
-    if (length < 400) return '⚡ Running the reasoning...';
-    if (length < 440) return '🌀 Fathoming the deeper meaning...';
-    if (length < 480) return '🤔 Musing over the possibilities...';
-    if (length < 520) return '📐 Triangulating the best approach...';
-    if (length < 560) return '⚡ Honing the response...';
-    if (length < 600) return '🎯 Mulling over the final details...';
-    if (length < 640) return '🖼️ Picturing the complete answer...';
-    if (length < 680) return '🔀 Untangling the complexity...';
-    if (length < 720) return '🔍 Sifting through the reasoning...';
-    if (length < 760) return '📊 Reckoning with the evidence...';
-    if (length < 800) return '💡 Connecting the final dots...';
-    return '✨ Finalizing the answer...';
+    if (_hasWebSearchGrounding) {
+      return '🌐 Searching the web...';
+    }
+    if (thinkingTextSoFar.trim().isEmpty) {
+      return '🧠 Thinking...';
+    }
+    return '🧠 Working through your request...';
   }
 
   Future<ConversationHive> _resolveCurrentConversation() async {
@@ -1516,24 +1608,40 @@ At the very start of your reply, output a topic tag on its own line in this exac
           _chatBox.values
               .where((msg) => msg.conversationId == finalConversationId)
               .toList();
-      for (final msg in oldMessages) {
-        await msg.delete();
+      final newlyAddedKeys = <dynamic>[];
+
+      try {
+        // Write the replacement history first. The old records remain intact
+        // until every new record has been added successfully.
+        for (final message in _messages) {
+          final chatMsg = ChatMessageHive(
+            text: message.text,
+            isUser: message.isUser,
+            timestamp: message.timestamp,
+            isError: message.isError,
+            modelUsed: _selectedModel,
+            conversationId: finalConversationId,
+            thinkingProcess: message.thinkingProcess,
+            thinkingTimeMs: message.thinkingTime?.inMilliseconds,
+            imageBytes: message.images,
+            isIncomplete: message.isIncomplete,
+          );
+          final key = await _chatBox.add(chatMsg);
+          newlyAddedKeys.add(key);
+        }
+      } catch (_) {
+        // Roll back only this attempted write. Previously saved messages stay.
+        for (final key in newlyAddedKeys) {
+          if (_chatBox.containsKey(key)) {
+            await _chatBox.delete(key);
+          }
+        }
+        rethrow;
       }
 
-      for (final message in _messages) {
-        final chatMsg = ChatMessageHive(
-          text: message.text,
-          isUser: message.isUser,
-          timestamp: message.timestamp,
-          isError: message.isError,
-          modelUsed: _selectedModel,
-          conversationId: finalConversationId,
-          thinkingProcess: message.thinkingProcess,
-          thinkingTimeMs: message.thinkingTime?.inMilliseconds,
-          imageBytes: message.images,
-          isIncomplete: message.isIncomplete,
-        );
-        await _chatBox.add(chatMsg);
+      // New history is now safely stored; remove the previous snapshot.
+      for (final msg in oldMessages) {
+        await msg.delete();
       }
     } catch (e) {
       if (kDebugMode) {
@@ -1656,8 +1764,22 @@ At the very start of your reply, output a topic tag on its own line in this exac
     }
 
     List<Uint8List>? compressedImages;
-    if (images.isNotEmpty) {
-      compressedImages = await _compressImages(images);
+    try {
+      if (images.isNotEmpty) {
+        compressedImages = await _compressImages(images);
+      }
+    } catch (e) {
+      if (kDebugMode) print('❌ Image preparation failed: $e');
+      if (mounted) {
+        setState(() {
+          _isSendingMessage = false;
+          _isSendingNotifier.value = false;
+        });
+        _showErrorBubble(
+          'Could not prepare the selected image. Please try again.',
+        );
+      }
+      return;
     }
 
     await _sendGeminiMessageInternal(
@@ -1689,10 +1811,14 @@ At the very start of your reply, output a topic tag on its own line in this exac
         _currentThinkingProcess = '';
         _isThinkingComplete = false;
         _isThinkingPhase = false;
+        _currentActivityLabel = '🧠 Thinking...';
+        _hasWebSearchGrounding = false;
         _currentStreamText = '';
         _thinkingPhaseStartedAt = null;
 
         if (!isRetry) {
+          _userScrolledUp = false;
+          _showScrollButton = false;
           _messages.add(
             ChatMessage(
               text: prompt,
@@ -1720,11 +1846,16 @@ At the very start of your reply, output a topic tag on its own line in this exac
 
     try {
       String accumulatedResponse = '';
-      bool thinkingDetected = false;
-
       _streamSubscription = _streamGeminiResponse(
         prompt,
         images: images,
+        onActivity: (label) {
+          if (!mounted) return;
+          setState(() {
+            _hasWebSearchGrounding = true;
+            _currentActivityLabel = label;
+          });
+        },
       ).listen(
         (chunk) {
           try {
@@ -1734,32 +1865,61 @@ At the very start of your reply, output a topic tag on its own line in this exac
               _partialResponseOnError = accumulatedResponse;
               _hasPartialResponse = true;
 
-              if (_enableThinking) {
-                if (!thinkingDetected &&
-                    accumulatedResponse.contains('THINKING_START')) {
-                  thinkingDetected = true;
-                  _isThinkingPhase = true;
-                  _thinkingPhaseStartedAt = DateTime.now();
-                  final parsed = _parseThinkingResponse(accumulatedResponse);
-                  if (parsed.thinkingProcess.isNotEmpty) {
-                    _currentThinkingProcess = parsed.thinkingProcess;
-                    _currentStreamText = '';
+                            if (_enableThinking) {
+                final parsed = _parseThinkingResponse(accumulatedResponse);
+                if (parsed.thinkingProcess.isNotEmpty) {
+                  _currentThinkingProcess = parsed.thinkingProcess;
+                  if (!_hasWebSearchGrounding) {
+                    _currentActivityLabel = _thinkingPhaseLabel(
+                      parsed.thinkingProcess,
+                    );
                   }
-                } else if (thinkingDetected && !_isThinkingComplete) {
-                  final parsed = _parseThinkingResponse(accumulatedResponse);
-                  if (parsed.thinkingProcess.isNotEmpty) {
-                    _currentThinkingProcess = parsed.thinkingProcess;
-                  }
-                  if (accumulatedResponse.contains('THINKING_END')) {
-                    if (_thinkingStopwatch.isRunning) _thinkingStopwatch.stop();
-                    _isThinkingComplete = true;
-                    _isThinkingPhase = false;
-                    _currentStreamText = _stripTopicTag(parsed.finalResponse);
-                  }
-                } else if (_isThinkingComplete) {
-                  final parsed = _parseThinkingResponse(accumulatedResponse);
-                  _currentStreamText = _stripTopicTag(parsed.finalResponse);
+                } else {
+                  _currentThinkingProcess = '';
                 }
+
+                final hasThinkingStart = accumulatedResponse.contains(
+                  'THINKING_START',
+                );
+                final hasThinkingEnd = accumulatedResponse.contains(
+                  'THINKING_END',
+                );
+
+                // The thinking phase is "on" when there is reasoning text to
+                // show, whether it arrived via markers or via the unmarked
+                // heuristic. This is what makes the dropdown populate live
+                // for replies that ignore the marker instruction.
+                final hasReasoningToShow = _currentThinkingProcess.isNotEmpty;
+
+                if (hasThinkingStart && !hasThinkingEnd) {
+                  _isThinkingPhase = true;
+                  _thinkingPhaseStartedAt ??= DateTime.now();
+                } else if (hasThinkingEnd) {
+                  if (!_isThinkingComplete && _thinkingStopwatch.isRunning) {
+                    _thinkingStopwatch.stop();
+                  }
+                  _isThinkingComplete = true;
+                  _isThinkingPhase = false;
+                  if (!_hasWebSearchGrounding) {
+                    _currentActivityLabel = '✨ Finalizing the answer...';
+                  }
+                } else if (hasReasoningToShow && parsed.finalResponse.isEmpty) {
+                  // Unmarked reasoning still streaming: keep phase on so the
+                  // activity pill and dropdown stay visible.
+                  _isThinkingPhase = true;
+                  _thinkingPhaseStartedAt ??= DateTime.now();
+                } else if (parsed.finalResponse.isNotEmpty) {
+                  // The answer has started. End the thinking phase and stop
+                  // the stopwatch so the panel shows a real duration.
+                  if (!_isThinkingComplete && _thinkingStopwatch.isRunning) {
+                    _thinkingStopwatch.stop();
+                  }
+                  _isThinkingComplete = true;
+                  _isThinkingPhase = false;
+                }
+
+                // Only the final-response portion is streamed into the bubble.
+                _currentStreamText = _stripTopicTag(parsed.finalResponse);
               } else {
                 _currentStreamText = _stripTopicTag(accumulatedResponse);
               }
@@ -1790,58 +1950,27 @@ At the very start of your reply, output a topic tag on its own line in this exac
                   ? '⚠️ API Quota Exceeded\n\n$errorMessage\n\nPlease wait and try again.'
                   : '❌ Error: $errorMessage\n\nTap Retry to try again.';
 
-          if (mounted) {
-            setState(() {
-              if (_activeErrorIndex != null &&
-                  _activeErrorIndex! < _messages.length &&
-                  _messages[_activeErrorIndex!].isError) {
-                _messages[_activeErrorIndex!] = ChatMessage(
-                  text: errorText,
-                  isUser: false,
-                  timestamp: DateTime.now(),
-                  isError: true,
-                  canRetry: true,
-                );
-              } else {
-                _messages.add(
-                  ChatMessage(
-                    text: errorText,
-                    isUser: false,
-                    timestamp: DateTime.now(),
-                    isError: true,
-                    canRetry: true,
-                  ),
-                );
-                _messageKeys.add(GlobalKey());
-                _activeErrorIndex = _messages.length - 1;
-              }
-              _isStreaming = false;
-              _isSendingMessage = false;
-              _isSendingNotifier.value = false;
-              _resetMessageState();
-            });
-          }
+          _showErrorBubble(errorText);
+          _resetMessageState();
         },
         onDone: () async {
           if (!mounted) return;
-          final parsedResponse = _parseThinkingResponse(accumulatedResponse);
+          final parsedResponse = _parseThinkingResponse(
+            accumulatedResponse,
+            isFinal: true,
+          );
+          // Use only a valid, final parsed summary. Streaming state may contain
+          // an unfinished block that was promoted into the answer as fallback.
           final thinkingText =
-              _currentThinkingProcess.isNotEmpty
-                  ? _currentThinkingProcess
-                  : (parsedResponse.thinkingProcess.isNotEmpty
-                      ? parsedResponse.thinkingProcess
-                      : null);
+              parsedResponse.thinkingProcess.isNotEmpty
+                  ? parsedResponse.thinkingProcess
+                  : null;
 
           String finalOutput =
               parsedResponse.finalResponse.isNotEmpty
                   ? parsedResponse.finalResponse
                   : _currentStreamText;
-
-          finalOutput =
-              finalOutput
-                  .replaceAll('THINKING_START', '')
-                  .replaceAll('THINKING_END', '')
-                  .trim();
+          finalOutput = finalOutput.trim();
 
           final topicRegex = RegExp(r'^\s*\[TOPIC:\s*(.+?)\]\s*\n?');
           final topicMatch = topicRegex.firstMatch(finalOutput);
@@ -1872,8 +2001,16 @@ At the very start of your reply, output a topic tag on its own line in this exac
           final bool seemsIncomplete = _checkIfResponseIncomplete(finalOutput);
 
           setState(() {
-            // Success -> clear error marker.
-            _activeErrorIndex = null;
+            // If a previous error bubble exists, remove it now that we succeeded.
+            if (_activeErrorIndex != null &&
+                _activeErrorIndex! < _messages.length &&
+                _messages[_activeErrorIndex!].isError) {
+              _messages.removeAt(_activeErrorIndex!);
+              if (_activeErrorIndex! < _messageKeys.length) {
+                _messageKeys.removeAt(_activeErrorIndex!);
+              }
+            }
+            _activeErrorIndex = null; // Reset the index
 
             if (seemsIncomplete) {
               _lastIncompleteResponse = finalOutput;
@@ -1927,43 +2064,24 @@ At the very start of your reply, output a topic tag on its own line in this exac
           );
           _messageKeys.add(GlobalKey());
         }
-        final errorText =
-            'Failed to get response: ${e.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry." : "Max retries reached."}';
-        if (_activeErrorIndex != null &&
-            _activeErrorIndex! < _messages.length &&
-            _messages[_activeErrorIndex!].isError) {
-          _messages[_activeErrorIndex!] = ChatMessage(
-            text: errorText,
-            isUser: false,
-            timestamp: DateTime.now(),
-            isError: true,
-            canRetry: _retryCount < _maxRetries,
-          );
-        } else {
-          _messages.add(
-            ChatMessage(
-              text: errorText,
-              isUser: false,
-              timestamp: DateTime.now(),
-              isError: true,
-              canRetry: _retryCount < _maxRetries,
-            ),
-          );
-          _messageKeys.add(GlobalKey());
-          _activeErrorIndex = _messages.length - 1;
-        }
-        _resetMessageState();
       });
+      final errorText =
+          'Failed to get response: ${e.toString()}\n\n${_retryCount < _maxRetries ? "Tap Retry." : "Max retries reached."}';
+      _showErrorBubble(errorText, canRetry: _retryCount < _maxRetries);
+      _resetMessageState();
     }
   }
 
   Future<List<Uint8List>> _compressImages(List<Uint8List> images) async {
     final List<Uint8List> compressed = [];
     for (var image in images) {
+      ui.Codec? codec;
+      ui.Image? decodedImage;
       try {
-        final codec = await ui.instantiateImageCodec(image, targetWidth: 1024);
+        codec = await ui.instantiateImageCodec(image, targetWidth: 1024);
         final frame = await codec.getNextFrame();
-        final byteData = await frame.image.toByteData(
+        decodedImage = frame.image;
+        final byteData = await decodedImage.toByteData(
           format: ui.ImageByteFormat.png,
         );
         if (byteData != null) {
@@ -1974,6 +2092,9 @@ At the very start of your reply, output a topic tag on its own line in this exac
       } catch (e) {
         if (kDebugMode) print('⚠️ Image compression error: $e');
         compressed.add(image);
+      } finally {
+        decodedImage?.dispose();
+        codec?.dispose();
       }
     }
     return compressed;
@@ -1987,6 +2108,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
     _currentThinkingProcess = '';
     _isThinkingComplete = false;
     _isThinkingPhase = false;
+    _currentActivityLabel = '🧠 Thinking...';
+    _hasWebSearchGrounding = false;
     _thinkingPhaseStartedAt = null;
     _thinkingStopwatch.reset();
     _autoScrollTimer?.cancel();
@@ -1994,26 +2117,24 @@ At the very start of your reply, output a topic tag on its own line in this exac
   }
 
   void _startAutoScrollTimer() {
+    // Auto-follow is driven by incoming chunks, not a periodic timer.
+    // A timer repeatedly jumping to maxScrollExtent can prevent manual scrolling.
     _autoScrollTimer?.cancel();
-    if (_enableAutoScroll) {
-      _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
-        _scheduleAutoScroll();
-      });
-    }
+    _autoScrollTimer = null;
   }
 
   void _scheduleAutoScroll() {
-    // CRITICAL FIX: Check _userScrolledUp.
-    // If the user swipes up, we DO NOT auto-scroll.
-    // This is what creates the DeepSeek-style scroll lock.
     if (!_enableAutoScroll || _userScrolledUp) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _scrollController.hasClients) {
-        try {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        } catch (e) {
-          // Ignore scroll errors
-        }
+      if (!mounted || !_scrollController.hasClients || _userScrolledUp) return;
+      final position = _scrollController.position;
+      // Never interrupt an active user drag/fling. Subsequent chunks will
+      // resume following only if the user returns to the bottom.
+      if (position.isScrollingNotifier.value) return;
+      try {
+        _scrollController.jumpTo(position.maxScrollExtent);
+      } catch (e) {
+        if (kDebugMode) print('⚠️ Auto-scroll skipped: $e');
       }
     });
   }
@@ -2400,7 +2521,6 @@ At the very start of your reply, output a topic tag on its own line in this exac
                               }
                             },
                           ),
-                         
                         ],
                       ),
                       const SizedBox(height: 16),
@@ -2550,6 +2670,24 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                 },
                               ),
                             ),
+                          ),
+                          SwitchListTile(
+                            title: const Text(
+                              '🚩 Show Report Button',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            subtitle: const Text(
+                              'Allow reporting AI responses',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                            value: _enableReporting,
+                            activeColor: Colors.green,
+                            onChanged: (value) {
+                              sheetSetState(() => _enableReporting = value);
+                              if (mounted) {
+                                setState(() => _enableReporting = value);
+                              }
+                            },
                           ),
                         ],
                       ),
@@ -3222,48 +3360,110 @@ At the very start of your reply, output a topic tag on its own line in this exac
   }
 
   Future<void> _jumpToTurn(int turnNumber) async {
-    if (turnNumber < 1) return;
-    int targetIndex = -1;
-    int seen = 0;
-    for (int i = 0; i < _messages.length; i++) {
-      if (_messages[i].isUser) {
-        seen++;
-        if (seen == turnNumber) {
-          targetIndex = i;
-          break;
-        }
+    if (turnNumber < 1 || _messages.isEmpty) return;
+
+    var targetIndex = -1;
+    var seen = 0;
+    for (var i = 0; i < _messages.length; i++) {
+      if (!_messages[i].isUser) continue;
+      seen++;
+      if (seen == turnNumber) {
+        targetIndex = i;
+        break;
       }
     }
-    if (targetIndex < 0) return;
+    if (targetIndex < 0 || !_scrollController.hasClients) return;
 
     _userScrolledUp = false;
     _showScrollButton = false;
 
-    if (targetIndex < _messageKeys.length) {
-      final key = _messageKeys[targetIndex];
-      final ctx = key.currentContext;
+    // ListView.builder only creates nearby rows. A distant row's GlobalKey
+    // has no context until we first scroll close to its estimated position.
+    final measuredHeights = <int, double>{};
+    var measuredTotal = 0.0;
+    for (var i = 0; i < _messageKeys.length && i < _messages.length; i++) {
+      final ctx = _messageKeys[i].currentContext;
+      final renderObject = ctx?.findRenderObject();
+      if (renderObject is RenderBox && renderObject.hasSize) {
+        final height = renderObject.size.height;
+        if (height > 0) {
+          measuredHeights[i] = height;
+          measuredTotal += height;
+        }
+      }
+    }
+    final averageHeight =
+        measuredHeights.isEmpty
+            ? 150.0
+            : measuredTotal / measuredHeights.length;
+    var estimatedOffset = 0.0;
+    for (var i = 0; i < targetIndex; i++) {
+      estimatedOffset += measuredHeights[i] ?? averageHeight;
+    }
+
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    final firstOffset = estimatedOffset.clamp(0.0, maxExtent).toDouble();
+    await _scrollController.animateTo(
+      firstOffset,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+    );
+
+    // The approximate jump should now have built the target row. Align its
+    // beginning, not the end of the conversation, then update the turn marker.
+    for (var attempt = 0; attempt < 4; attempt++) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      final ctx =
+          targetIndex < _messageKeys.length
+              ? _messageKeys[targetIndex].currentContext
+              : null;
       if (ctx != null) {
+        if (!ctx.mounted) return;
         await Scrollable.ensureVisible(
           ctx,
           alignment: 0.02,
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
         );
-        if (!mounted) return;
-        setState(() => _currentVisibleTurn = turnNumber);
+        if (mounted) setState(() => _currentVisibleTurn = turnNumber);
         return;
       }
+
+      if (!_scrollController.hasClients) return;
+      int? firstBuiltIndex;
+      int? lastBuiltIndex;
+      for (var i = 0; i < _messageKeys.length; i++) {
+        if (_messageKeys[i].currentContext == null) continue;
+        firstBuiltIndex ??= i;
+        lastBuiltIndex = i;
+      }
+
+      var nextOffset = _scrollController.position.pixels;
+      if (firstBuiltIndex != null && lastBuiltIndex != null) {
+        if (targetIndex < firstBuiltIndex) {
+          nextOffset -= averageHeight * (firstBuiltIndex - targetIndex);
+        } else if (targetIndex > lastBuiltIndex) {
+          nextOffset += averageHeight * (targetIndex - lastBuiltIndex);
+        } else {
+          // The target is in the list's built range; give layout one more frame.
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+      } else {
+        nextOffset = firstOffset + averageHeight * (attempt + 1);
+      }
+      nextOffset =
+          nextOffset
+              .clamp(0.0, _scrollController.position.maxScrollExtent)
+              .toDouble();
+      await _scrollController.animateTo(
+        nextOffset,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+      );
     }
 
-    if (!_scrollController.hasClients) return;
-    final max = _scrollController.position.maxScrollExtent;
-    final fraction = (targetIndex / (_messages.isEmpty ? 1 : _messages.length))
-        .clamp(0.0, 1.0);
-    await _scrollController.animateTo(
-      max * fraction,
-      duration: const Duration(milliseconds: 400),
-      curve: Curves.easeOut,
-    );
     if (mounted) setState(() => _currentVisibleTurn = turnNumber);
   }
 
@@ -3841,7 +4041,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                         for (int i = 0; i <= index; i++) {
                                           if (_messages[i].isUser) turnNumber++;
                                         }
-                                                                                // Try to find the user message that prompted this AI response
+                                        // Try to find the user message that prompted this AI response
                                         String? promptForThisMsg;
                                         if (!_messages[index].isUser &&
                                             index > 0) {
@@ -3860,8 +4060,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                               _messages[index].isUser
                                                   ? turnNumber
                                                   : 0,
-                                          originalPrompt:
-                                              promptForThisMsg, // <-- ADD THIS
+                                          originalPrompt: promptForThisMsg,
+                                          showReportButton: _enableReporting,
                                           onContinuePressed:
                                               _messages[index].isIncomplete
                                                   ? _continueIncompleteResponse
@@ -3873,52 +4073,56 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                           onCancelPressed: _cancelRetry,
                                         );
                                       } else {
-                                        if (_isThinkingPhase &&
-                                            _enableThinking) {
-                                          final phaseLabel =
-                                              _thinkingPhaseLabel(
-                                                _currentThinkingProcess,
-                                              );
-                                          return Container(
-                                            margin: const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                              horizontal: 4,
-                                            ),
-                                            padding: const EdgeInsets.all(14),
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey.shade900,
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              border: Border.all(
-                                                color: Colors.purpleAccent
-                                                    .withAlpha(60),
-                                                width: 1,
-                                              ),
-                                            ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Row(
+                                        return Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (_isStreaming)
+                                              Container(
+                                                margin:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 8,
+                                                      horizontal: 4,
+                                                    ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 14,
+                                                      vertical: 12,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey.shade900,
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                  border: Border.all(
+                                                    color: Colors.purpleAccent
+                                                        .withAlpha(60),
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
                                                   children: [
-                                                    const Icon(
-                                                      Icons.psychology,
+                                                    Icon(
+                                                      _currentActivityLabel
+                                                              .contains('web')
+                                                          ? Icons.language
+                                                          : Icons.psychology,
                                                       color:
                                                           Colors.purpleAccent,
                                                       size: 18,
                                                     ),
                                                     const SizedBox(width: 10),
-                                                    const Text(
-                                                      'Thinking...',
-                                                      style: TextStyle(
-                                                        color:
-                                                            Colors.purpleAccent,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        fontSize: 14,
+                                                    Flexible(
+                                                      child: Text(
+                                                        _currentActivityLabel,
+                                                        style: const TextStyle(
+                                                          color: Colors.white70,
+                                                          fontSize: 13,
+                                                        ),
                                                       ),
                                                     ),
-                                                    const SizedBox(width: 8),
+                                                    const SizedBox(width: 10),
                                                     const SizedBox(
                                                       width: 14,
                                                       height: 14,
@@ -3933,67 +4137,26 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                                             ),
                                                       ),
                                                     ),
-                                                    const Spacer(),
-                                                    Text(
-                                                      phaseLabel,
-                                                      style: const TextStyle(
-                                                        color: Colors.grey,
-                                                        fontSize: 11,
-                                                        fontStyle:
-                                                            FontStyle.italic,
-                                                      ),
-                                                    ),
                                                   ],
                                                 ),
-                                                if (_currentThinkingProcess
-                                                    .isNotEmpty)
-                                                  Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                          top: 10,
-                                                        ),
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                            12,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color: Colors.black,
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              8,
-                                                            ),
-                                                      ),
-                                                      child: Text(
-                                                        _currentThinkingProcess,
-                                                        style: const TextStyle(
-                                                          color:
-                                                              Colors
-                                                                  .lightGreenAccent,
-                                                          fontSize: 13,
-                                                          height: 1.4,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          );
-                                        } else {
-                                          return ChatBubbleWithThinking(
-                                            message: ChatMessage(
-                                              text: _currentStreamText,
-                                              isUser: false,
-                                              timestamp: DateTime.now(),
-                                              isLoading: _isStreaming,
-                                            ),
-                                            enableAutoScroll: _enableAutoScroll,
-                                            turnNumber: 0,
-                                            onContinuePressed: null,
-                                            onRetryPressed: null,
-                                            onCancelPressed: _cancelRetry,
-                                          );
-                                        }
+                                              ),
+                                            if (_currentStreamText.isNotEmpty)
+                                              ChatBubbleWithThinking(
+                                                message: ChatMessage(
+                                                  text: _currentStreamText,
+                                                  isUser: false,
+                                                  timestamp: DateTime.now(),
+                                                  isLoading: _isStreaming,
+                                                ),
+                                                enableAutoScroll:
+                                                    _enableAutoScroll,
+                                                turnNumber: 0,
+                                                onContinuePressed: null,
+                                                onRetryPressed: null,
+                                                onCancelPressed: _cancelRetry,
+                                              ),
+                                          ],
+                                        );
                                       }
                                     },
                                   ),
@@ -4083,7 +4246,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                   Expanded(
                                     child: Container(
                                       constraints: BoxConstraints(
-                                        maxHeight: _inputExpanded ? 140 : 44,
+                                        maxHeight: _inputExpanded ? 140 : 76,
                                       ),
                                       decoration: BoxDecoration(
                                         color: Colors.grey.shade800,
@@ -4096,7 +4259,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
                                           color: Colors.white,
                                           fontSize: 14,
                                         ),
-                                        maxLines: _inputExpanded ? null : 1,
+                                        maxLines: _inputExpanded ? null : 3,
                                         minLines: 1,
                                         keyboardType: TextInputType.multiline,
                                         textInputAction:
@@ -4385,6 +4548,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
   final bool enableAutoScroll;
   final int turnNumber;
   final String? originalPrompt; // <-- ADD THIS
+  final bool showReportButton;
   final VoidCallback? onContinuePressed;
   final VoidCallback? onRetryPressed;
   final VoidCallback? onCancelPressed;
@@ -4395,6 +4559,7 @@ class ChatBubbleWithThinking extends StatefulWidget {
     this.enableAutoScroll = false,
     this.turnNumber = 0,
     this.originalPrompt, // <-- ADD THIS
+    this.showReportButton = false,
     this.onContinuePressed,
     this.onRetryPressed,
     this.onCancelPressed,
@@ -4420,11 +4585,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       return const SizedBox.shrink();
     }
     final thinkingText = widget.message.thinkingProcess!;
-    final preview =
-        thinkingText.length > 60
-            ? '${thinkingText.substring(0, 60)}...'
-            : thinkingText;
-
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -4437,7 +4597,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
           'thinking_${widget.message.timestamp.millisecondsSinceEpoch}',
         ),
         tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        initiallyExpanded: _isThinkingExpanded,
+        initiallyExpanded: false,
         onExpansionChanged: (expanded) {
           setState(() {
             _isThinkingExpanded = expanded;
@@ -4454,8 +4614,8 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
             const SizedBox(width: 8),
             Text(
               widget.message.thinkingTime != null
-                  ? '🧠 Thought for ${_formatThinkingTime(widget.message.thinkingTime!)}'
-                  : '🧠 Thinking Process',
+                  ? '🧠 Reasoning summary · ${_formatThinkingTime(widget.message.thinkingTime!)}'
+                  : '🧠 Reasoning summary',
               style: const TextStyle(
                 color: Colors.purpleAccent,
                 fontSize: 13,
@@ -4463,17 +4623,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
               ),
             ),
             const Spacer(),
-            if (!_isThinkingExpanded)
-              Text(
-                preview,
-                style: const TextStyle(
-                  color: Colors.grey,
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
           ],
         ),
         children: [
@@ -4498,7 +4647,7 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
                     ),
                     SizedBox(width: 6),
                     Text(
-                      'Detailed Reasoning:',
+                      'Approach summary:',
                       style: TextStyle(
                         color: Colors.amber,
                         fontSize: 11,
@@ -4551,29 +4700,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ),
       ),
     );
-  }
-
-  List<_CodeBlock> _extractCodeBlocks(String text) {
-    final List<_CodeBlock> blocks = [];
-    final regex = RegExp(r'```(\w*)\s*\n?([\s\S]*?)```', multiLine: true);
-    for (final match in regex.allMatches(text)) {
-      final language = (match.group(1) ?? '').trim();
-      final code = (match.group(2) ?? '').trim();
-      if (code.isNotEmpty) {
-        final isDuplicate = blocks.any(
-          (b) => b.code == code && b.language == language,
-        );
-        if (!isDuplicate) {
-          blocks.add(
-            _CodeBlock(
-              language: language.isEmpty ? 'txt' : language,
-              code: code,
-            ),
-          );
-        }
-      }
-    }
-    return blocks;
   }
 
   /// Code block now shows a COPY button directly on the left, next
@@ -4676,46 +4802,6 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ],
       ),
     );
-  }
-
-  List<List<List<String>>> _extractTables(String text) {
-    final tables = <List<List<String>>>[];
-    final lines = text.split('\n');
-    int i = 0;
-    while (i < lines.length) {
-      final line = lines[i].trim();
-      if (line.startsWith('|') && line.endsWith('|')) {
-        final block = <String>[];
-        while (i < lines.length) {
-          final l = lines[i].trim();
-          if (l.startsWith('|') && l.endsWith('|')) {
-            block.add(l);
-            i++;
-          } else {
-            break;
-          }
-        }
-        if (block.length >= 2) {
-          final rows = <List<String>>[];
-          for (final row in block) {
-            if (RegExp(r'^\|[\s\-\|:]+\|$').hasMatch(row)) continue;
-            final cells =
-                row
-                    .split('|')
-                    .where((c) => c.trim().isNotEmpty || c == ' ')
-                    .map((c) => c.trim())
-                    .toList();
-            final cleaned =
-                cells.where((c) => !RegExp(r'^[\-\s:]+$').hasMatch(c)).toList();
-            if (cleaned.isNotEmpty) rows.add(cleaned);
-          }
-          if (rows.isNotEmpty) tables.add(rows);
-        }
-      } else {
-        i++;
-      }
-    }
-    return tables;
   }
 
   /// Table header row now has a COPY button right next to "TABLE".
@@ -4907,10 +4993,129 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
   }
 
   Widget _buildParsedText(String text) {
-    final tables = _extractTables(text);
-    final codeBlocks = _extractCodeBlocks(text);
+    if (text.isEmpty) return const SizedBox.shrink();
 
-    if (tables.isEmpty && codeBlocks.isEmpty) {
+    final lines = text
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .split('\n');
+    final widgets = <Widget>[];
+    final plainText = StringBuffer();
+    var codeBlockIndex = 0;
+
+    void flushPlainText() {
+      final value = plainText.toString().trim();
+      if (value.isNotEmpty) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: SelectionArea(
+              child: Text(
+                value,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ),
+          ),
+        );
+      }
+      plainText.clear();
+    }
+
+    bool isPipeRow(String line) {
+      final value = line.trim();
+      return value.contains('|') && !value.startsWith('```');
+    }
+
+    List<String> tableCells(String line) {
+      var value = line.trim();
+      if (value.startsWith('|')) value = value.substring(1);
+      if (value.endsWith('|')) value = value.substring(0, value.length - 1);
+      return value.split('|').map((cell) => cell.trim()).toList();
+    }
+
+    bool isTableSeparator(String line) {
+      if (!isPipeRow(line)) return false;
+      final cells = tableCells(line);
+      return cells.length >= 2 &&
+          cells.every((cell) => RegExp(r'^:?-{3,}:?$').hasMatch(cell));
+    }
+
+    var i = 0;
+    while (i < lines.length) {
+      final line = lines[i];
+      final trimmedLeft = line.trimLeft();
+
+      // Fenced code block: render it exactly at its original position.
+      if (trimmedLeft.startsWith('```')) {
+        flushPlainText();
+        final language = trimmedLeft.substring(3).trim();
+        final codeLines = <String>[];
+        i++;
+        var foundClosingFence = false;
+        while (i < lines.length) {
+          if (lines[i].trimLeft().startsWith('```')) {
+            foundClosingFence = true;
+            i++;
+            break;
+          }
+          codeLines.add(lines[i]);
+          i++;
+        }
+        final code = codeLines.join('\n').replaceFirst(RegExp(r'\n+$'), '');
+        if (code.trim().isNotEmpty) {
+          widgets.add(
+            _buildCodeBlock(
+              _CodeBlock(
+                language: language.isEmpty ? 'txt' : language,
+                code: code,
+              ),
+              codeBlockIndex++,
+            ),
+          );
+        } else if (!foundClosingFence) {
+          // Empty, unterminated fences should not silently erase content.
+          plainText.writeln('```$language');
+        }
+        continue;
+      }
+
+      // A Markdown table is recognized by a header row followed by a valid
+      // separator row. It is rendered inline between the surrounding text.
+      if (i + 1 < lines.length &&
+          isPipeRow(line) &&
+          isTableSeparator(lines[i + 1])) {
+        flushPlainText();
+        final tableRows = <List<String>>[];
+        tableRows.add(tableCells(lines[i]));
+        i += 2; // Skip the Markdown separator row.
+        while (i < lines.length && isPipeRow(lines[i])) {
+          tableRows.add(tableCells(lines[i]));
+          i++;
+        }
+        final columnCount = tableRows.fold<int>(
+          0,
+          (maxColumns, row) =>
+              row.length > maxColumns ? row.length : maxColumns,
+        );
+        for (final row in tableRows) {
+          while (row.length < columnCount) {
+            row.add('');
+          }
+        }
+        if (tableRows.length > 1 && columnCount > 0) {
+          widgets.add(_buildTable(tableRows));
+        } else {
+          plainText.writeln(line);
+        }
+        continue;
+      }
+
+      plainText.writeln(line);
+      i++;
+    }
+
+    flushPlainText();
+    if (widgets.isEmpty) {
       return SelectionArea(
         child: Text(
           text,
@@ -4918,111 +5123,9 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
         ),
       );
     }
-
-    if (tables.isNotEmpty) {
-      final widgets = <Widget>[];
-      final lines = text.split('\n');
-      final buffer = <String>[];
-      int i = 0;
-      while (i < lines.length) {
-        final l = lines[i].trim();
-        if (l.startsWith('|') && l.endsWith('|')) {
-          if (buffer.isNotEmpty) {
-            final plain = buffer.join('\n').trim();
-            if (plain.isNotEmpty) {
-              widgets.add(
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: SelectionArea(
-                    child: Text(
-                      plain,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                    ),
-                  ),
-                ),
-              );
-            }
-            buffer.clear();
-          }
-          final tableLines = <String>[];
-          while (i < lines.length &&
-              lines[i].trim().startsWith('|') &&
-              lines[i].trim().endsWith('|')) {
-            tableLines.add(lines[i].trim());
-            i++;
-          }
-          final parsedTables = _extractTables(tableLines.join('\n'));
-          if (parsedTables.isNotEmpty) {
-            widgets.add(_buildTable(parsedTables.first));
-          }
-        } else {
-          buffer.add(lines[i]);
-          i++;
-        }
-      }
-      if (buffer.isNotEmpty) {
-        final plain = buffer.join('\n').trim();
-        if (plain.isNotEmpty) {
-          widgets.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: SelectionArea(
-                child: Text(
-                  plain,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-              ),
-            ),
-          );
-        }
-      }
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: widgets,
-      );
-    }
-
-    String remainingText = text;
-    final List<Widget> widgets = [];
-    for (int i = 0; i < codeBlocks.length; i++) {
-      final block = codeBlocks[i];
-      final codePattern = '```${block.language}\n${block.code}\n```';
-      final parts = remainingText.split(codePattern);
-      if (parts.isNotEmpty && parts[0].trim().isNotEmpty) {
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: SelectionArea(
-              child: Text(
-                parts[0].trim(),
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-              ),
-            ),
-          ),
-        );
-      }
-      widgets.add(_buildCodeBlock(block, i));
-      if (parts.length > 1) {
-        remainingText = parts.sublist(1).join(codePattern);
-      } else {
-        remainingText = '';
-      }
-    }
-    if (remainingText.trim().isNotEmpty) {
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: SelectionArea(
-            child: Text(
-              remainingText.trim(),
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-            ),
-          ),
-        ),
-      );
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: widgets,
     );
   }
@@ -5136,12 +5239,12 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
       child: ElevatedButton(
         onPressed: widget.onContinuePressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.lightBlue.withAlpha(30),
-          foregroundColor: Colors.blue,
+          backgroundColor: Colors.orange.withAlpha(30),
+          foregroundColor: Colors.orange,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
-            side: BorderSide(color: Colors.greenAccent.withAlpha(100), width: 1),
+            side: BorderSide(color: Colors.orange.withAlpha(100), width: 1),
           ),
         ),
         child: const Row(
@@ -5217,32 +5320,38 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
               ),
             ),
           ),
-          // NEW: Report Button for Play Store compliance
-          InkWell(
-            onTap: _reportMessage,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withAlpha(30),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.redAccent.withAlpha(100),
-                  width: 1,
+
+          // Report Button (Next to Copy)
+          if (widget.showReportButton) // <-- FIXED: uses widget variable
+            InkWell(
+              onTap: _reportMessage,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withAlpha(30),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.redAccent.withAlpha(100),
+                    width: 1,
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.flag, size: 14, color: Colors.redAccent),
+                    SizedBox(width: 6),
+                    Text(
+                      'Report',
+                      style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                    ),
+                  ],
                 ),
               ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.flag, size: 14, color: Colors.redAccent),
-                  SizedBox(width: 6),
-                  Text(
-                    'Report',
-                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
-                  ),
-                ],
-              ),
             ),
-          ),
+
           if (widget.onRetryPressed != null)
             InkWell(
               onTap: widget.onRetryPressed,
@@ -5277,11 +5386,11 @@ class _ChatBubbleWithThinkingState extends State<ChatBubbleWithThinking> {
     );
   }
 
-    /// Opens a pre-filled email with the user's prompt and the AI response.
+  /// Opens a pre-filled email with the user's prompt and the AI response.
   void _reportMessage() async {
     // We will build the body.
     // For now, we pass the AI response.
-        final String body = '''
+    final String body = '''
 Hello Denis,
 
 I would like to report an AI response.
@@ -5473,10 +5582,6 @@ Time: ${widget.message.timestamp.toIso8601String()}
                                 fontStyle: FontStyle.italic,
                               ),
                             ),
-                          if (message.isError &&
-                              widget.onRetryPressed != null &&
-                              message.canRetry)
-                            _buildRetryButton(),
                           if (message.isIncomplete &&
                               !message.isUser &&
                               !message.isError &&
