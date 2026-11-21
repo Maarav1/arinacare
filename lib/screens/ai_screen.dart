@@ -134,25 +134,34 @@ class _AIScreenState extends State<AIScreen>
       isRecommended: false,
       provider: 'groq',
     ),
-    // Safety GPT OSS 20B — policy-following, for moderation/safety use
     GeminiModel(
-      id: 'openai/gpt-oss-safeguard-20b',
-      name: 'Safety GPT OSS 20B (Groq)',
-      description: 'Policy-following reasoning for safety workflows',
-      priority: 'Specialized',
-      bestFor: 'Content moderation, trust & safety',
-      isRecommended: false,
-      provider: 'groq',
+      id: 'gemini-3.5-flash',
+      name: 'Gemini 3.5 Flash',
+      description: 'Latest 3.x Flash, 1M context',
+      priority: 'Recommended',
+      bestFor: 'Most applications',
+      isRecommended: true,
+      provider: 'gemini',
     ),
-    // Qwen 3.8 27B — preview, highest benchmark score among Groq's paid models
+    // Gemini 3.1 Flash-Lite
     GeminiModel(
-      id: 'qwen/qwen3.8-27b',
-      name: 'Qwen 3.8 27B (Groq)',
-      description: 'Preview model, strong reasoning',
-      priority: 'Preview',
-      bestFor: 'Advanced reasoning',
+      id: 'gemini-3.1-flash-lite',
+      name: 'Gemini 3.1 Flash-Lite',
+      description: 'Low-latency, cost-effective',
+      priority: 'Budget',
+      bestFor: 'High-frequency lightweight tasks',
       isRecommended: false,
-      provider: 'groq',
+      provider: 'gemini',
+    ),
+    // Gemini 3 Flash Preview
+    GeminiModel(
+      id: 'gemini-3-flash-preview',
+      name: 'Gemini 3 Flash Preview',
+      description: 'Preview model, 1M context',
+      priority: 'Preview',
+      bestFor: 'Testing newest capabilities',
+      isRecommended: false,
+      provider: 'gemini',
     ),
   ];
 
