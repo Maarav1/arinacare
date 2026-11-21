@@ -114,13 +114,45 @@ class _AIScreenState extends State<AIScreen>
       bestFor: 'General use',
       isRecommended: false,
     ),
+   // GPT OSS 120B — flagship open-weight, best reasoning/coding
     GeminiModel(
-      id: 'gemini-3.8-flash',
-      name: 'Gemini 3.8 Flash',
-      description: 'Ultra-cheap tier',
-      priority: 'Budget',
-      bestFor: 'High volume',
+      id: 'openai/gpt-oss-120b',
+      name: 'GPT OSS 120B (Groq)',
+      description: 'OpenAI open-weight flagship, fast via Groq',
+      priority: 'Fast',
+      bestFor: 'Reasoning, coding, complex tasks',
       isRecommended: false,
+      provider: 'groq',
+    ),
+    // GPT OSS 20B — lighter, cheapest, fastest
+    GeminiModel(
+      id: 'openai/gpt-oss-20b',
+      name: 'GPT OSS 20B (Groq)',
+      description: 'Compact open-weight, ultra-low cost',
+      priority: 'Budget',
+      bestFor: 'Simple tasks, high volume',
+      isRecommended: false,
+      provider: 'groq',
+    ),
+    // Safety GPT OSS 20B — policy-following, for moderation/safety use
+    GeminiModel(
+      id: 'openai/gpt-oss-safeguard-20b',
+      name: 'Safety GPT OSS 20B (Groq)',
+      description: 'Policy-following reasoning for safety workflows',
+      priority: 'Specialized',
+      bestFor: 'Content moderation, trust & safety',
+      isRecommended: false,
+      provider: 'groq',
+    ),
+    // Qwen 3.8 27B — preview, highest benchmark score among Groq's paid models
+    GeminiModel(
+      id: 'qwen/qwen3.8-27b',
+      name: 'Qwen 3.8 27B (Groq)',
+      description: 'Preview model, strong reasoning',
+      priority: 'Preview',
+      bestFor: 'Advanced reasoning',
+      isRecommended: false,
+      provider: 'groq',
     ),
   ];
 
@@ -944,7 +976,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
     });
 
     if (_messages.isNotEmpty) {
-            final chatMessages =
+      final chatMessages =
           _messages
               .where(
                 (msg) =>
@@ -953,10 +985,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
               )
               .toList();
 
-      // Remove the current prompt from history because it is added
-      // separately below as the new user message.
-      // Remove only the LAST matching user message to preserve
-      // earlier messages that happen to contain the same text.
+      // Remove the latest matching user message from history.
+      // It will be added separately as the current prompt below.
       for (int i = chatMessages.length - 1; i >= 0; i--) {
         if (chatMessages[i].isUser &&
             chatMessages[i].text.trim() == currentPrompt.trim()) {
@@ -966,6 +996,7 @@ At the very start of your reply, output a topic tag on its own line in this exac
       }
 
       List<ChatMessage> contextMessages;
+
       if (chatMessages.length <= _maxContextMessages) {
         contextMessages = chatMessages;
       } else {
@@ -973,12 +1004,14 @@ At the very start of your reply, output a topic tag on its own line in this exac
           ...chatMessages.take(2),
           ...chatMessages.skip(chatMessages.length - (_maxContextMessages - 2)),
         ];
+
         contents.add({
           'role': 'user',
           'parts': [
             {'text': '[Earlier conversation history omitted for brevity]'},
           ],
         });
+
         contents.add({
           'role': 'model',
           'parts': [
@@ -1047,9 +1080,13 @@ At the very start of your reply, output a topic tag on its own line in this exac
     void Function(String label)? onActivity,
   }) async* {
     final bool streamMode = _enableStreaming;
+    final provider =
+        _availableModels
+            .firstWhere((m) => m.id == _selectedModel)
+            .provider; // add this field to GeminiModel
     final String url =
-        'https://us-central1-lifematters-c466d.cloudfunctions.net/geminiProxy?model=$_selectedModel&streaming=true';
-
+        'https://us-central1-lifematters-c466d.cloudfunctions.net/aiProxy'
+        '?model=$_selectedModel&streaming=true&provider=$provider';
     final headers = {'Content-Type': 'application/json'};
     final contents = _buildSmartContext(prompt, images);
 
@@ -4500,6 +4537,7 @@ class GeminiModel {
   final String priority;
   final String bestFor;
   final bool isRecommended;
+  final String provider;
 
   const GeminiModel({
     required this.id,
@@ -4508,6 +4546,7 @@ class GeminiModel {
     required this.priority,
     required this.bestFor,
     required this.isRecommended,
+    this.provider = 'gemini',
   });
 }
 
