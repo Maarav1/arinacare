@@ -263,7 +263,7 @@ class _AIScreenState extends State<AIScreen>
       provider: 'gemini',
     ),
     GeminiModel(
-      id: 'ministral-8b-latest',
+      id: 'codestral-2508',
       name: 'ministral-8b-latest',
       description: 'Preview model, 1M context',
       priority: 'Preview',
