@@ -114,7 +114,7 @@ class _AIScreenState extends State<AIScreen>
       bestFor: 'General use',
       isRecommended: false,
     ),
-   // GPT OSS 120B — flagship open-weight, best reasoning/coding
+   // GPT OSS 120B — flagship open-weight, bst reasoning/coding
     GeminiModel(
       id: 'openai/gpt-oss-120b',
       name: 'GPT OSS 120B (Groq)',
