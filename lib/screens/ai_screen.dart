@@ -369,7 +369,7 @@ class _AIScreenState extends State<AIScreen>
   double _temperature = 0.2;
 
   int _maxContextMessages = 100;
-  // Smart Context is always ON
+  // Smart Context is always O
   final bool _enableSmartContext = true;
 
   bool _alwaysSearchForAccuracy = true;
