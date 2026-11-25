@@ -12,7 +12,6 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 // flutter_adsense is web-only; guard it so mobile builds don't break.
 // ignore: avoid_web_libraries_in_flutter
 import 'adsense_stub.dart' if (dart.library.js_interop) 'adsense_real.dart';
-
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/services.dart';
@@ -88,8 +87,9 @@ class _AIScreenState extends State<AIScreen>
   bool _hasPartialResponse = false;
   String _partialResponseOnError = '';
 
-  String _selectedModel = 'gemini-2.5-flash';
+    String _selectedModel = 'gemini-2.5-flash';
   final List<GeminiModel> _availableModels = [
+    // ── Gemini ─────────────────────────────────────────────
     GeminiModel(
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
@@ -97,6 +97,7 @@ class _AIScreenState extends State<AIScreen>
       priority: 'Recommended',
       bestFor: 'Most applications',
       isRecommended: true,
+      provider: 'gemini',
     ),
     GeminiModel(
       id: 'gemini-2.5-flash-lite',
@@ -105,34 +106,16 @@ class _AIScreenState extends State<AIScreen>
       priority: 'Budget',
       bestFor: 'Simple tasks',
       isRecommended: false,
+      provider: 'gemini',
     ),
     GeminiModel(
       id: 'gemini-3.1-flash-lite-preview',
       name: 'Gemini 3.1 Flash-Lite',
-      description: 'Stable workhorse',
+      description: 'Stable workhorse, low latency',
       priority: 'Balanced',
       bestFor: 'General use',
       isRecommended: false,
-    ),
-   // GPT OSS 120B — flagship open-weight, bst reasoning/coding
-    GeminiModel(
-      id: 'openai/gpt-oss-120b',
-      name: 'GPT OSS 120B (Groq)',
-      description: 'OpenAI open-weight flagship, fast via Groq',
-      priority: 'Fast',
-      bestFor: 'Reasoning, coding, complex tasks',
-      isRecommended: false,
-      provider: 'groq',
-    ),
-    // GPT OSS 20B — lighter, cheapest, fastest
-    GeminiModel(
-      id: 'openai/gpt-oss-20b',
-      name: 'GPT OSS 20B (Groq)',
-      description: 'Compact open-weight, ultra-low cost',
-      priority: 'Budget',
-      bestFor: 'Simple tasks, high volume',
-      isRecommended: false,
-      provider: 'groq',
+      provider: 'gemini',
     ),
     GeminiModel(
       id: 'gemini-3.5-flash-lite',
@@ -143,21 +126,19 @@ class _AIScreenState extends State<AIScreen>
       isRecommended: true,
       provider: 'gemini',
     ),
-    // Gemini 3.1 Flash-Lite
     GeminiModel(
       id: 'gemini-3.5-transcribe',
-      name: 'Gemini 3.5',
-      description: 'Low-latency, cost-effective',
-      priority: 'Budget',
-      bestFor: 'High-frequency lightweight tasks',
+      name: 'Gemini 3.5 Transcribe',
+      description: 'Audio transcription-focused',
+      priority: 'Specialized',
+      bestFor: 'Transcription tasks',
       isRecommended: false,
       provider: 'gemini',
     ),
-    // Gemini 3 Flash Preview
     GeminiModel(
       id: 'gemini-3.6-flash',
-      name: 'Gemini 36 Flash Preview',
-      description: 'Preview model, 1M context',
+      name: 'Gemini 3.6 Flash',
+      description: 'Preview Flash, 1M context',
       priority: 'Preview',
       bestFor: 'Testing newest capabilities',
       isRecommended: false,
@@ -165,13 +146,80 @@ class _AIScreenState extends State<AIScreen>
     ),
     GeminiModel(
       id: 'gemini-3.7-flash',
-      name: 'Gemini 37 Flash Preview',
-      description: 'Preview model, 1M context',
+      name: 'Gemini 3.7 Flash',
+      description: 'Preview Flash, 1M context',
       priority: 'Preview',
       bestFor: 'Testing newest capabilities',
       isRecommended: false,
       provider: 'gemini',
     ),
+    GeminiModel(
+      id: 'gemini-4-hydrogen',
+      name: 'Gemini 4 Hydrogen',
+      description: 'Newest preview, 1M context',
+      priority: 'Preview',
+      bestFor: 'Cutting-edge testing',
+      isRecommended: false,
+      provider: 'gemini',
+    ),
+    GeminiModel(
+      id: 'gemini-robotics-er-2-preview',
+      name: 'Gemini Robotics ER 2',
+      description: 'Robotics preview, experimental',
+      priority: 'Preview',
+      bestFor: 'Experimental robotics',
+      isRecommended: false,
+      provider: 'gemini',
+    ),
+    GeminiModel(
+      id: 'gemini-flash-lite-latest',
+      name: 'Gemini Flash-Lite (latest)',
+      description: 'Rolling alias for newest Flash-Lite',
+      priority: 'Auto',
+      bestFor: 'Always-current lightweight model',
+      isRecommended: false,
+      provider: 'gemini',
+    ),
+    GeminiModel(
+      id: 'gemini-flash-latest',
+      name: 'Gemini Flash (latest)',
+      description: 'Rolling alias for newest Flash',
+      priority: 'Auto',
+      bestFor: 'Always-current Flash model',
+      isRecommended: false,
+      provider: 'gemini',
+    ),
+    GeminiModel(
+      id: 'gemini-3-flash-preview',
+      name: 'Gemini 3 Flash Preview',
+      description: 'Preview Flash, 1M context',
+      priority: 'Preview',
+      bestFor: 'Testing newest capabilities',
+      isRecommended: false,
+      provider: 'gemini',
+    ),
+
+    // ── Groq ───────────────────────────────────────────────
+    GeminiModel(
+      id: 'openai/gpt-oss-120b',
+      name: 'GPT OSS 120B (Groq)',
+      description: 'OpenAI open-weight flagship, fast via Groq',
+      priority: 'Fast',
+      bestFor: 'Reasoning, coding, complex tasks',
+      isRecommended: false,
+      provider: 'groq',
+    ),
+    GeminiModel(
+      id: 'openai/gpt-oss-20b',
+      name: 'GPT OSS 20B (Groq)',
+      description: 'Compact open-weight, ultra-low cost',
+      priority: 'Budget',
+      bestFor: 'Simple tasks, high volume',
+      isRecommended: false,
+      provider: 'groq',
+    ),
+
+    // ── Mistral ────────────────────────────────────────────
     GeminiModel(
       id: 'mistral-large-latest',
       name: 'Mistral Large',
@@ -192,84 +240,75 @@ class _AIScreenState extends State<AIScreen>
     ),
     GeminiModel(
       id: 'codestral-latest',
-      name: 'codestral-latest 37 Flash Preview',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Codestral (Mistral)',
+      description: 'Code-focused flagship',
+      priority: 'Code',
+      bestFor: 'Code generation & completion',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'mistral-code-latest',
-      name: 'codestral-latest Flash Preview',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Mistral Code',
+      description: 'Code-specialized model',
+      priority: 'Code',
+      bestFor: 'Code generation',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'mistral-code-fim-latest',
-      name: 'mistral-code-fim-latest',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Mistral Code FIM',
+      description: 'Fill-in-the-middle code model',
+      priority: 'Code',
+      bestFor: 'Inline code completion',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'ministral-14b-2512',
-      name: 'ministral-14b-2512',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Ministral 14B (2512)',
+      description: 'Mid-size Ministral, December release',
+      priority: 'Balanced',
+      bestFor: 'General tasks',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'ministral-3b-2512',
-      name: 'ministral-3b-2512',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Ministral 3B (2512)',
+      description: 'Small Ministral, December release',
+      priority: 'Budget',
+      bestFor: 'Fast lightweight tasks',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'ministral-3b-latest',
-      name: 'ministral-3b-latest',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Ministral 3B (latest)',
+      description: 'Rolling alias for small Ministral',
+      priority: 'Auto',
+      bestFor: 'Always-current small model',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'ministral-8b-2512',
-      name: 'ministral-8b-2512',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Ministral 8B (2512)',
+      description: 'Compact Ministral, December release',
+      priority: 'Balanced',
+      bestFor: 'Everyday tasks',
       isRecommended: false,
-      provider: 'gemini',
-    ),
-    GeminiModel(
-      id: 'ministral-8b-latest',
-      name: 'ministral-8b-latest',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
-      isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
     GeminiModel(
       id: 'codestral-2508',
-      name: 'ministral-8b-latest',
-      description: 'Preview model, 1M context',
-      priority: 'Preview',
-      bestFor: 'Testing newest capabilities',
+      name: 'Codestral (2508)',
+      description: 'August 2025 Codestral release',
+      priority: 'Code',
+      bestFor: 'Code generation',
       isRecommended: false,
-      provider: 'gemini',
+      provider: 'mistral',
     ),
   ];
 
@@ -1039,7 +1078,14 @@ PRE-RESPONSE QUALITY REVIEW (MANDATORY):
 
 TABLE FORMATTING:
 - Use proper Markdown tables (| header | header | with separator |---|---|).
-- NEVER use dots, ellipses, or placeholder text for a table.''';
+- NEVER use dots, ellipses, or placeholder text for a table.
+
+MATH FORMATTING:
+- Use plain text, not LaTeX.
+- Use Cin, Cout, AND, OR, XOR, NOT in words where applicable.
+- Use * or × for multiplication and / for division.
+- Do not wrap formulas in dollar-sign delimiters.
+''';
 
     if (_alwaysSearchForAccuracy) {
       systemPrompt += '''
@@ -1086,8 +1132,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
       'role': 'model',
       'parts': [
         {
-          'text':
-              'Understood. I will use the full conversation history as real memory.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate.${_alwaysSearchForAccuracy ? ' I will verify with Google Search before answering.' : ''} I will think deeply and review my draft before responding.${_enableThinking ? ' I will use the thinking format.' : ''}',
+                    'text':
+              'Understood. I will use the full conversation history as real memory.${hasUserInfo && userName.isNotEmpty ? ' I know your name is $userName.' : ''} Current date: $currentDate.${_alwaysSearchForAccuracy ? ' I will verify with Google Search before answering.' : ''} I will think deeply and review my draft before responding.${_enableThinking ? ' I will use the thinking format.' : ''} I will follow the formatting rules: no LaTeX, math in plain text, Cout/Cin not C_{out}/C_{in}, AND/OR/XOR/NOT in words.',
         },
       ],
     });
@@ -1197,6 +1243,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
     void Function(String label)? onActivity,
   }) async* {
     final bool streamMode = _enableStreaming;
+
+   // final bool streamMode = _enableStreaming;
     final provider =
         _availableModels
             .firstWhere((m) => m.id == _selectedModel)
@@ -1205,6 +1253,8 @@ At the very start of your reply, output a topic tag on its own line in this exac
         'https://us-central1-lifematters-c466d.cloudfunctions.net/aiProxy'
         '?model=$_selectedModel&streaming=true&provider=$provider';
     final headers = {'Content-Type': 'application/json'};
+
+
     final contents = _buildSmartContext(prompt, images);
 
     final requestBody = <String, dynamic>{
@@ -1476,9 +1526,33 @@ At the very start of your reply, output a topic tag on its own line in this exac
           });
           _scheduleAutoScroll();
         },
-        onError: (error) {
+                onError: (error) {
           if (!mounted) return;
-          _showErrorBubble('Network error. Tap Retry.');
+          final errorMessage = error.toString();
+          final lower = errorMessage.toLowerCase();
+          String reason;
+          if (lower.contains('429') ||
+              lower.contains('resource_exhausted') ||
+              lower.contains('rate limit') ||
+              lower.contains('quota')) {
+            reason = '⚠️ Rate limit or quota exceeded.\n\n$errorMessage';
+          } else if (lower.contains('503') ||
+              lower.contains('high demand') ||
+              lower.contains('unavailable')) {
+            reason = '⚠️ Model temporarily unavailable.\n\n$errorMessage';
+          } else if (lower.contains('404') ||
+              lower.contains('not found') ||
+              lower.contains('does not exist')) {
+            reason = '⚠️ Model not found.\n\n$errorMessage';
+          } else if (lower.contains('401') ||
+              lower.contains('403') ||
+              lower.contains('invalid api key') ||
+              lower.contains('permission')) {
+            reason = '⚠️ Authentication failed.\n\n$errorMessage';
+          } else {
+            reason = '❌ Network error. Tap Retry.\n\n$errorMessage';
+          }
+          _showErrorBubble(reason);
           _resetContinueState();
         },
         onDone: () async {
@@ -2109,6 +2183,21 @@ At the very start of your reply, output a topic tag on its own line in this exac
         },
         onDone: () async {
           if (!mounted) return;
+
+          // Detect a stream that completed without delivering any usable text.
+          if (accumulatedResponse.trim().isEmpty &&
+              _currentStreamText.trim().isEmpty) {
+            _showErrorBubble(
+              '⚠️ Empty API response.\n\n'
+              'The request finished, but the server returned no text.\n'
+              'Possible causes: API/provider failure, proxy issue, blocked response, '
+              'model error, or an empty stream.\n\n'
+              'Check your network and server logs, then tap Retry.',
+            );
+            _resetMessageState();
+            return;
+          }
+
           final parsedResponse = _parseThinkingResponse(
             accumulatedResponse,
             isFinal: true,
