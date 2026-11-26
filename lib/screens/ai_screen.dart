@@ -302,13 +302,13 @@ class _AIScreenState extends State<AIScreen>
       provider: 'mistral',
     ),
     GeminiModel(
-      id: 'codestral-2508',
+      id: 'allam-2-7b',
       name: 'Codestral (2508)',
       description: 'August 2025 Codestral release',
       priority: 'Code',
       bestFor: 'Code generation',
       isRecommended: false,
-      provider: 'mistral',
+      provider: 'groq',
     ),
   ];
 
@@ -2502,18 +2502,39 @@ At the very start of your reply, output a topic tag on its own line in this exac
   }
 
   void _stopGenerating() {
+    final partial = _currentStreamText.trim();
+
     _cancelCurrentStream();
-    if (mounted) {
-      setState(() {
-        _isStreaming = false;
-        _isSendingMessage = false;
-        _isSendingNotifier.value = false;
-        _currentStreamText = '';
-        _currentThinkingProcess = '';
-        _isThinkingComplete = false;
-        _isThinkingPhase = false;
-      });
-    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isStreaming = false;
+      _isSendingMessage = false;
+      _isSendingNotifier.value = false;
+
+      if (partial.isNotEmpty) {
+        _lastIncompleteResponse = partial;
+
+        _messages.add(
+          ChatMessage(
+            text: partial,
+            isUser: false,
+            timestamp: DateTime.now(),
+            isIncomplete: true,
+          ),
+        );
+
+        _messageKeys.add(GlobalKey());
+      }
+
+      _currentStreamText = '';
+      _currentThinkingProcess = '';
+      _isThinkingComplete = false;
+      _isThinkingPhase = false;
+    });
+
+    _saveConversation();
   }
 
   Future<void> _showPlatformSelectionScreen() async {
